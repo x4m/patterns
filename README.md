@@ -1,28 +1,45 @@
 # Russian Forest Patterns
 
-Генераторы бесконечных непериодических паттернов на тему «русский лес». Каждый файл — самодостаточный HTML, открывается прямо в браузере без сервера.
+Генераторы бесконечных непериодических паттернов на тему «русский лес».  
+Каждый файл — самодостаточный HTML, работает прямо в браузере без сервера.
 
-## Генераторы
+## Открыть онлайн
 
-| Файл | Мотив | Алгоритм |
-|------|-------|----------|
-| `birch-generator.html` | Берёза — лентикели на коре | Колонки + scatter по ячейкам |
-| `pine.html` | Сосна — ветки с иголками | Колонки + параметрические ветви |
-| `strawberry.html` | Земляника — листья и ягоды | 2D scatter |
-| `nettle.html` | Крапива — листья и стебли | 2D scatter, процедурные зубцы |
-| `raspberry.html` | Малина — листья и ягоды | 2D scatter, кластеры костянок |
-| `stones.html` | Камни | Бесконечный Вороной (Worley noise) |
-| `river.html` | Реки | Синусоидальный меандр |
-| `road.html` | Лесные дороги | Синусоидальный меандр, виды сверху |
+> Ссылки через [htmlpreview.github.io](https://htmlpreview.github.io) — работают сразу, без настройки.
 
-## Использование
+| Генератор | Мотив |
+|-----------|-------|
+| [Берёза](https://htmlpreview.github.io/?https://github.com/x4m/patterns/blob/main/birch-generator.html) | Лентикели на коре |
+| [Сосна](https://htmlpreview.github.io/?https://github.com/x4m/patterns/blob/main/pine.html) | Ветки с иголками |
+| [Земляника](https://htmlpreview.github.io/?https://github.com/x4m/patterns/blob/main/strawberry.html) | Листья и ягоды |
+| [Крапива](https://htmlpreview.github.io/?https://github.com/x4m/patterns/blob/main/nettle.html) | Листья и стебли |
+| [Малина](https://htmlpreview.github.io/?https://github.com/x4m/patterns/blob/main/raspberry.html) | Листья и ягоды |
+| [Камни](https://htmlpreview.github.io/?https://github.com/x4m/patterns/blob/main/stones.html) | Вороной |
+| [Реки](https://htmlpreview.github.io/?https://github.com/x4m/patterns/blob/main/river.html) | Меандрирующие потоки |
+| [Дороги](https://htmlpreview.github.io/?https://github.com/x4m/patterns/blob/main/road.html) | Лесные тропы, вид сверху |
 
-Откройте любой HTML-файл в браузере. Все генераторы:
-- Бесконечны — перетаскивайте мышью в любую сторону
-- Непериодичны — паттерн никогда не повторяется
-- Детерминированы — один и тот же seed всегда даёт одинаковый результат
-- Экспортируют PNG 2560×1440 кнопкой «Сохранить PNG»
+### GitHub Pages (быстрее и без прокси)
 
-## Общая библиотека
+Включите в настройках репозитория: **Settings → Pages → Source: Deploy from branch → main / (root)**.  
+После этого генераторы будут доступны напрямую:  
+`https://x4m.github.io/patterns/birch-generator.html` и т.д.
 
-`pattern-lib.js` содержит общий код для всех генераторов: PRNG (Mulberry32), детерминированный хеш, canvas-взаимодействие (pan/zoom/touch), экспорт, стили UI.
+## Возможности
+
+- **Бесконечны** — перетаскивайте мышью в любую сторону
+- **Непериодичны** — паттерн никогда не повторяется точно
+- **Детерминированы** — один seed всегда даёт одинаковый результат
+- **Экспорт** — кнопка «Сохранить PNG» отдаёт файл 2560×1440
+
+## Архитектура
+
+`pattern-lib.js` — общая библиотека: PRNG [Mulberry32](https://gist.github.com/tommyettinger/46a874533244883189143505d203312c), детерминированный хеш, canvas-взаимодействие (pan / zoom / touch), экспорт PNG, стили UI.
+
+Алгоритмы генерации:
+
+| Тип | Файлы | Метод |
+|-----|-------|-------|
+| Колонки | берёза, сосна | Вертикальные полосы + hash(column, row) |
+| Scatter | земляника, крапива, малина | 2D ячейки + hash(i, j) |
+| Вороной | камни | Worley noise, отсечение Сазерленда–Ходжмана |
+| Линейные | реки, дороги | Сумма синусоид (меандр) |
