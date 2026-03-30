@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Дороги — Pattern Generator</title>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <h3>🛤 Дороги</h3>
+  <div class="sep"></div>
+
+  <div class="seed-row">
+    <label>Seed</label>
+    <input type="number" id="seedInput" value="88" min="0" max="9999999">
+    <button class="sec" onclick="randomSeedFn('seedInput')" title="Случайный seed">↺</button>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="row">
+    <label>Расстояние</label>
+    <input type="range" id="roadSpacing" min="100" max="500" value="240">
+    <span class="val" id="roadSpacingVal">240</span>
+  </div>
+  <div class="row">
+    <label>Ширина дороги</label>
+    <input type="range" id="roadWidth" min="15" max="100" value="42">
+    <span class="val" id="roadWidthVal">42</span>
+  </div>
+  <div class="row">
+    <label>Колея</label>
+    <input type="range" id="rutWidth" min="2" max="16" value="6">
+    <span class="val" id="rutWidthVal">6</span>
+  </div>
+  <div class="row">
+    <label>Изгиб</label>
+    <input type="range" id="curvature" min="0" max="60" value="18">
+    <span class="val" id="curvatureVal">18</span>
+  </div>
+  <div class="row">
+    <label>Неровность края</label>
+    <input type="range" id="edgeRoughness" min="0" max="20" value="7">
+    <span class="val" id="edgeRoughnessVal">7</span>
+  </div>
+  <div class="row">
+    <label>Лужи</label>
+    <input type="range" id="puddleAmount" min="0" max="1" value="0.25" step="0.05">
+    <span class="val" id="puddleAmountVal">0.25</span>
+  </div>
+  <div class="row">
+    <label>Трава по краям</label>
+    <input type="range" id="grassEdge" min="0" max="30" value="12">
+    <span class="val" id="grassEdgeVal">12</span>
+  </div>
+  <div class="row">
+    <label>Масштаб</label>
+    <input type="range" id="zoom" min="25" max="300" value="100">
+    <span class="val" id="zoomVal">100%</span>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="btns">
+    <button onclick="exportPNG(canvas, render, window._patternSeed)">Сохранить PNG</button>
+    <button class="sec" onclick="window._patternView.resetView()">Сброс вида</button>
+  </div>
+
+  <div class="hint">Перетаскивайте мышью · Колесо = зум</div>
+  <div class="coords" id="coords">x: 0  y: 0</div>
+</div>
+
+<script src="pattern-lib.js"></script>
+<script>
+injectCSS(PATTERN_UI_CSS);
+
+window._patternSeed = 88;
+window._coordsEl = document.getElementById('coords');
+window._zoomEl = document.getElementById('zoom');
+window._zoomValEl = document.getElementById('zoomVal');
+
+const canvas = document.getElementById('c');
+
+let roadSpacing = 240;
+let roadWidth = 42;
+let rutWidth = 6;
+let curvature = 18;
+let edgeRoughness = 7;
+let puddleAmount = 0.25;
+let grassEdge = 12;
+
+// ─── Road geometry ────────────────────────────────────────────────────────
+
+// Center x of road k at world y wy.
+function getRoadX(k, wy) {
+  const rng = mulberry32(hashN(k, 0xD17A));
+  const s = roadSpacing;
+  const c = curvature / 100;
+  // Gentle curves — fewer harmonics than rivers, lower amplitude
+  const A1 = (0.06 + rng() * 0.1) * s * c;
+  const f1 = (0.5 + rng() * 0.8) * 0.0004;
+  const p1 = rng() * Math.PI * 2;
+  const A2 = (0.02 + rng() * 0.04) * s * c;
+  const f2 = (2 + rng() * 3) * 0.0004;
+  const p2 = rng() * Math.PI * 2;
+  return k * s + A1 * Math.sin(f1 * wy + p1)
+              + A2 * Math.sin(f2 * wy + p2);
+}
+
+// Edge roughness: small irregular offset for each road edge
+function getEdgeOffset(k, wy, side) {
+  const rng = mulberry32(hashN(k, side > 0 ? 0xED6E : 0xED62));
+  const f1 = (3 + rng() * 5) * 0.002;
+  const p1 = rng() * Math.PI * 2;
+  const f2 = (10 + rng() * 15) * 0.002;
+  const p2 = rng() * Math.PI * 2;
+  return edgeRoughness * (0.6 * Math.sin(f1 * wy + p1) + 0.4 * Math.sin(f2 * wy + p2));
+}
+
+// ─── Drawing ──────────────────────────────────────────────────────────────
+
+// Sample road centerline in screen space
+function sampleRoad(k, sy0, sy1, ox, oy, z) {
+  const step = Math.max(3, 5 / z);
+  const pts = [];
+  for (let sy = sy0; sy <= sy1 + step; sy += step) {
+    const wy = (sy + oy) / z;
+    pts.push({ wy, sx: getRoadX(k, wy) * z - ox, sy });
+  }
+  return pts;
+}
+
+// Build outer edge points
+function buildEdge(k, sy0, sy1, ox, oy, z, side) {
+  const step = Math.max(3, 5 / z);
+  const pts = [];
+  for (let sy = sy0; sy <= sy1 + step; sy += step) {
+    const wy = (sy + oy) / z;
+    const cx = getRoadX(k, wy) * z - ox;
+    const hw = (roadWidth / 2 + getEdgeOffset(k, wy, side)) * z;
+    pts.push({ x: cx + side * hw, y: sy });
+  }
+  return pts;
+}
+
+function fillBand(ctx, leftPts, rightPts) {
+  ctx.beginPath();
+  ctx.moveTo(rightPts[0].x, rightPts[0].y);
+  for (const p of rightPts) ctx.lineTo(p.x, p.y);
+  for (let i = leftPts.length - 1; i >= 0; i--) ctx.lineTo(leftPts[i].x, leftPts[i].y);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawRoad(ctx, k, sy0, sy1, ox, oy, z) {
+  const center = sampleRoad(k, sy0, sy1, ox, oy, z);
+  const rightEdge = buildEdge(k, sy0, sy1, ox, oy, z, +1);
+  const leftEdge  = buildEdge(k, sy0, sy1, ox, oy, z, -1);
+
+  // ── Grass fringe ─────────────────────────────────────────────────
+  if (grassEdge > 0) {
+    const gw = grassEdge * z;
+
+    // Right grass strip
+    ctx.fillStyle = 'rgba(85,115,48,0.55)';
+    ctx.beginPath();
+    ctx.moveTo(rightEdge[0].x, rightEdge[0].y);
+    for (const p of rightEdge) ctx.lineTo(p.x, p.y);
+    for (let i = rightEdge.length - 1; i >= 0; i--) ctx.lineTo(rightEdge[i].x + gw, rightEdge[i].y);
+    ctx.closePath();
+    ctx.fill();
+
+    // Left grass strip
+    ctx.beginPath();
+    ctx.moveTo(leftEdge[0].x, leftEdge[0].y);
+    for (const p of leftEdge) ctx.lineTo(p.x, p.y);
+    for (let i = leftEdge.length - 1; i >= 0; i--) ctx.lineTo(leftEdge[i].x - gw, leftEdge[i].y);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // ── Road surface ─────────────────────────────────────────────────
+  ctx.fillStyle = '#c4a870';
+  fillBand(ctx, leftEdge, rightEdge);
+
+  // Surface texture: fine dots
+  ctx.save();
+  // Clip to road surface
+  ctx.beginPath();
+  ctx.moveTo(rightEdge[0].x, rightEdge[0].y);
+  for (const p of rightEdge) ctx.lineTo(p.x, p.y);
+  for (let i = leftEdge.length - 1; i >= 0; i--) ctx.lineTo(leftEdge[i].x, leftEdge[i].y);
+  ctx.closePath();
+  ctx.clip();
+
+  // Subtle longitudinal scratches (like tire marks fading)
+  const scratchRng = mulberry32(hashN(k, 0x5C4A));
+  ctx.strokeStyle = 'rgba(155,125,75,0.18)';
+  ctx.lineWidth = Math.max(0.5, 0.8 * z);
+  for (let s = 0; s < 6; s++) {
+    const offX = (scratchRng() - 0.5) * roadWidth * 0.7 * z;
+    ctx.beginPath();
+    let first = true;
+    for (const pt of center) {
+      const x = pt.sx + offX + (scratchRng() - 0.5) * 2 * z;
+      first ? ctx.moveTo(x, pt.sy) : ctx.lineTo(x, pt.sy);
+      first = false;
+    }
+    ctx.stroke();
+  }
+
+  // ── Puddles ────────────────────────────────────────────────────
+  if (puddleAmount > 0) {
+    const pRng = mulberry32(hashN(k, 0xABCD));
+    // Distribute puddles along the road length (world space)
+    const wy0 = (sy0 + oy) / z;
+    const wy1 = (sy1 + oy) / z;
+    const puddles = Math.round(puddleAmount * (wy1 - wy0) / 120);
+
+    for (let p = 0; p < puddles + 2; p++) {
+      if (pRng() > puddleAmount) continue;
+      const pwy = wy0 + pRng() * (wy1 - wy0);
+      const psx = getRoadX(k, pwy) * z - ox + (pRng() - 0.5) * roadWidth * 0.5 * z;
+      const psy = pwy * z - oy;
+      const pr = (6 + pRng() * 14) * z;
+      const pg = ctx.createRadialGradient(psx - pr * 0.2, psy - pr * 0.2, pr * 0.05, psx, psy, pr);
+      pg.addColorStop(0, 'rgba(100,140,175,0.75)');
+      pg.addColorStop(0.6, 'rgba(80,115,150,0.65)');
+      pg.addColorStop(1, 'rgba(60,90,120,0)');
+      ctx.fillStyle = pg;
+      ctx.beginPath();
+      ctx.ellipse(psx, psy, pr, pr * 0.45, (pRng() - 0.5) * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+
+  // ── Wheel ruts ────────────────────────────────────────────────────
+  const rutOffset = roadWidth * 0.28 * z;
+  const rutHw = rutWidth / 2 * z;
+
+  for (const side of [-1, 1]) {
+    // Rut fill: dark compressed earth
+    ctx.beginPath();
+    let first = true;
+    for (const pt of center) {
+      const x = pt.sx + side * rutOffset - rutHw;
+      first ? ctx.moveTo(x, pt.sy) : ctx.lineTo(x, pt.sy);
+      first = false;
+    }
+    for (let i = center.length - 1; i >= 0; i--) {
+      ctx.lineTo(center[i].sx + side * rutOffset + rutHw, center[i].sy);
+    }
+    ctx.closePath();
+
+    const rutGrad = ctx.createLinearGradient(0, sy0, 0, sy1);
+    rutGrad.addColorStop(0, 'rgba(75,52,28,0.82)');
+    rutGrad.addColorStop(0.5, 'rgba(88,62,32,0.85)');
+    rutGrad.addColorStop(1, 'rgba(75,52,28,0.82)');
+    ctx.fillStyle = rutGrad;
+    ctx.fill();
+
+    // Rut inner shadow
+    ctx.strokeStyle = 'rgba(40,25,10,0.4)';
+    ctx.lineWidth = Math.max(0.5, rutHw * 0.4);
+    ctx.beginPath();
+    first = true;
+    for (const pt of center) {
+      const x = pt.sx + side * rutOffset;
+      first ? ctx.moveTo(x, pt.sy) : ctx.lineTo(x, pt.sy);
+      first = false;
+    }
+    ctx.stroke();
+  }
+
+  // ── Center grass strip ────────────────────────────────────────────
+  const grassHw = (roadWidth * 0.14) * z;
+  ctx.beginPath();
+  let first = true;
+  for (const pt of center) {
+    const x = pt.sx - grassHw;
+    first ? ctx.moveTo(x, pt.sy) : ctx.lineTo(x, pt.sy);
+    first = false;
+  }
+  for (let i = center.length - 1; i >= 0; i--) {
+    ctx.lineTo(center[i].sx + grassHw, center[i].sy);
+  }
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(100,138,58,0.7)';
+  ctx.fill();
+}
+
+// ─── Render ───────────────────────────────────────────────────────────────
+
+function render(ctx, w, h, ox, oy, z) {
+  // Forest floor background
+  ctx.fillStyle = '#7a9450';
+  ctx.fillRect(0, 0, w, h);
+
+  // Background texture: varied foliage blobs
+  const bgRng = mulberry32(hashN(0, 0, 0xF055));
+  for (let i = 0; i < 200; i++) {
+    const tx = bgRng() * w;
+    const ty = bgRng() * h;
+    const tr = (3 + bgRng() * 22) * z;
+    const alpha = 0.05 + bgRng() * 0.1;
+    const lighter = bgRng() > 0.5;
+    ctx.fillStyle = lighter
+      ? `rgba(140,175,80,${alpha})`
+      : `rgba(45,70,22,${alpha})`;
+    ctx.beginPath();
+    ctx.arc(tx, ty, tr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const wx0 = ox / z, wx1 = (ox + w) / z;
+  const kMin = Math.floor(wx0 / roadSpacing) - 1;
+  const kMax = Math.ceil(wx1 / roadSpacing) + 1;
+
+  for (let k = kMin; k <= kMax; k++) {
+    drawRoad(ctx, k, -30, h + 30, ox, oy, z);
+  }
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────
+
+window._patternView = setupCanvas(canvas, render);
+
+bindSlider('roadSpacing',   v => { roadSpacing = v; });
+bindSlider('roadWidth',     v => { roadWidth = v; });
+bindSlider('rutWidth',      v => { rutWidth = v; });
+bindSlider('curvature',     v => { curvature = v; });
+bindSlider('edgeRoughness', v => { edgeRoughness = v; });
+bindSlider('puddleAmount',  v => { puddleAmount = v; });
+bindSlider('grassEdge',     v => { grassEdge = v; });
+bindSlider('zoom', v => {
+  window._patternView.zoom = v / 100;
+  window._zoomValEl.textContent = v + '%';
+}, v => v + '%');
+bindSeed('seedInput');
+
+window._patternView.redraw();
+</script>
+</body>
+</html>

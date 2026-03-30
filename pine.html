@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Сосна — Pattern Generator</title>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <h3>🌲 Сосна</h3>
+  <div class="sep"></div>
+
+  <div class="seed-row">
+    <label>Seed</label>
+    <input type="number" id="seedInput" value="31" min="0" max="9999999">
+    <button class="sec" onclick="randomSeedFn('seedInput')" title="Случайный seed">↺</button>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="row">
+    <label>Стволы</label>
+    <input type="range" id="trunkSpacing" min="80" max="320" value="180">
+    <span class="val" id="trunkSpacingVal">180</span>
+  </div>
+  <div class="row">
+    <label>Плотность веток</label>
+    <input type="range" id="branchDensity" min="3" max="18" value="9" step="1">
+    <span class="val" id="branchDensityVal">9</span>
+  </div>
+  <div class="row">
+    <label>Длина ветки</label>
+    <input type="range" id="branchLen" min="20" max="160" value="72">
+    <span class="val" id="branchLenVal">72</span>
+  </div>
+  <div class="row">
+    <label>Угол ветки</label>
+    <input type="range" id="branchAngle" min="10" max="85" value="42">
+    <span class="val" id="branchAngleVal">42°</span>
+  </div>
+  <div class="row">
+    <label>Иглы</label>
+    <input type="range" id="needleLen" min="4" max="28" value="13">
+    <span class="val" id="needleLenVal">13</span>
+  </div>
+  <div class="row">
+    <label>Масштаб</label>
+    <input type="range" id="zoom" min="25" max="300" value="100">
+    <span class="val" id="zoomVal">100%</span>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="btns">
+    <button onclick="exportPNG(canvas, render, window._patternSeed)">Сохранить PNG</button>
+    <button class="sec" onclick="window._patternView.resetView()">Сброс вида</button>
+  </div>
+
+  <div class="hint">Перетаскивайте мышью · Колесо = зум</div>
+  <div class="coords" id="coords">x: 0  y: 0</div>
+</div>
+
+<script src="pattern-lib.js"></script>
+<script>
+injectCSS(PATTERN_UI_CSS);
+
+window._patternSeed = 31;
+window._coordsEl = document.getElementById('coords');
+window._zoomEl = document.getElementById('zoom');
+window._zoomValEl = document.getElementById('zoomVal');
+
+const canvas = document.getElementById('c');
+
+let trunkSpacing = 180;
+let branchDensity = 9;
+let branchLen = 72;
+let branchAngle = 42;
+let needleLen = 13;
+
+// ─── Drawing ──────────────────────────────────────────────────────────────
+
+// Draw a single pine needle pair at position along a branchlet
+function drawNeedles(cx, x, y, angle, len, thickness) {
+  const spread = 0.38; // angle spread between the two needles
+  for (let side = -1; side <= 1; side += 2) {
+    const na = angle + side * spread;
+    cx.beginPath();
+    cx.moveTo(x, y);
+    cx.lineTo(x + Math.cos(na) * len, y + Math.sin(na) * len);
+    cx.stroke();
+  }
+}
+
+// Draw a pine branchlet with needles.
+// Origin at attachment point on main branch, grows in direction `angle`.
+function drawBranchlet(cx, len, angle, needleL, rng) {
+  const steps = Math.max(3, Math.floor(len / (needleL * 1.4)));
+  const stepLen = len / steps;
+
+  let x = 0, y = 0;
+  // Slight droop: angle increases gradually
+  const droopPerStep = 0.06 + rng() * 0.05;
+
+  cx.lineWidth = Math.max(0.5, len * 0.018);
+  cx.strokeStyle = '#2e1c08';
+
+  for (let s = 0; s < steps; s++) {
+    const curAngle = angle + s * droopPerStep;
+    const nx2 = x + Math.cos(curAngle) * stepLen;
+    const ny2 = y + Math.sin(curAngle) * stepLen;
+
+    // Stem segment
+    cx.beginPath();
+    cx.moveTo(x, y);
+    cx.lineTo(nx2, ny2);
+    cx.stroke();
+
+    // Needles at midpoint
+    const mx = (x + nx2) / 2;
+    const my = (y + ny2) / 2;
+    const perpAngle = curAngle - Math.PI / 2;
+
+    cx.lineWidth = Math.max(0.4, len * 0.008);
+    // Slightly greenish-dark color, slight variation
+    const gv = Math.round(65 + rng() * 15);
+    cx.strokeStyle = `rgb(28,${gv},18)`;
+    drawNeedles(cx, mx, my, perpAngle, needleL * (0.8 + s / steps * 0.4), len * 0.01);
+
+    cx.strokeStyle = '#2e1c08';
+    cx.lineWidth = Math.max(0.5, len * 0.018);
+    x = nx2;
+    y = ny2;
+  }
+}
+
+// Polyfill for roundRect (not available in all browsers)
+function roundRectPath(cx, x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  cx.beginPath();
+  cx.moveTo(x + r, y);
+  cx.lineTo(x + w - r, y);
+  cx.arcTo(x + w, y, x + w, y + r, r);
+  cx.lineTo(x + w, y + h - r);
+  cx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  cx.lineTo(x + r, y + h);
+  cx.arcTo(x, y + h, x, y + h - r, r);
+  cx.lineTo(x, y + r);
+  cx.arcTo(x, y, x + r, y, r);
+  cx.closePath();
+}
+
+// Draw pine bark section: reddish-brown plates between y0 and y1
+function drawBark(cx, x, y0, y1, trunkW, rng) {
+  const plateHeight = 18 + rng() * 14;
+  const numPlates = Math.ceil((y1 - y0) / plateHeight) + 1;
+
+  for (let p = 0; p < numPlates; p++) {
+    const py0 = y0 + p * plateHeight - rng() * 5;
+    const py1 = py0 + plateHeight * (0.7 + rng() * 0.3);
+    const indent = rng() * 3;
+
+    const r = Math.round(100 + rng() * 35);
+    const g = Math.round(55 + rng() * 25);
+    const b = Math.round(20 + rng() * 15);
+    cx.fillStyle = `rgb(${r},${g},${b})`;
+
+    cx.beginPath();
+    roundRectPath(cx, x - trunkW / 2 + indent, py0, trunkW - indent * 2, py1 - py0, 3);
+    cx.fill();
+
+    // Crack line between plates
+    cx.strokeStyle = `rgba(30,12,5,0.35)`;
+    cx.lineWidth = 0.7;
+    cx.beginPath();
+    cx.moveTo(x - trunkW * 0.4, py1);
+    cx.lineTo(x + trunkW * 0.4, py1 + rng() * 4 - 2);
+    cx.stroke();
+  }
+}
+
+function render(ctx, w, h, ox, oy, z) {
+  ctx.fillStyle = '#dde8d0';
+  ctx.fillRect(0, 0, w, h);
+
+  const cellH = 120;
+  const wx0 = ox / z, wy0 = oy / z;
+  const wx1 = (ox + w) / z, wy1 = (oy + h) / z;
+
+  const kMin = Math.floor(wx0 / trunkSpacing) - 1;
+  const kMax = Math.ceil(wx1 / trunkSpacing) + 1;
+  const jMin = Math.floor(wy0 / cellH) - 1;
+  const jMax = Math.ceil(wy1 / cellH) + 1;
+
+  const trunkW = 12; // world units
+
+  // ── Trunk barks (behind branches) ─────────────────────────────────────
+  for (let k = kMin; k <= kMax; k++) {
+    const wx = k * trunkSpacing;
+    const sx = wx * z - ox;
+
+    const trunkRng = mulberry32(hashN(k, 0xBEEF));
+    // Slight horizontal jitter per trunk
+    const jitterX = (trunkRng() - 0.5) * trunkSpacing * 0.15;
+
+    ctx.save();
+    ctx.translate((sx + jitterX * z), 0);
+    ctx.scale(z, z);
+    drawBark(ctx, 0, wy0 - 10, wy1 + 10, trunkW, mulberry32(hashN(k, 0xF00D)));
+    ctx.restore();
+  }
+
+  // ── Branches ───────────────────────────────────────────────────────────
+  for (let k = kMin; k <= kMax; k++) {
+    const wx = k * trunkSpacing;
+    const sx = wx * z - ox;
+
+    const trunkRng = mulberry32(hashN(k, 0xBEEF));
+    const jitterX = (trunkRng() - 0.5) * trunkSpacing * 0.15;
+    const trunkSX = sx + jitterX * z;
+
+    for (let j = jMin; j <= jMax; j++) {
+      const rng = mulberry32(hashN(k, j));
+
+      // How many branch pairs in this cell
+      const numBranches = Math.max(1, Math.round(branchDensity * cellH / 120));
+
+      for (let b = 0; b < numBranches; b++) {
+        // Y position of branch node
+        const wy = (j + rng()) * cellH;
+        const sy = wy * z - oy;
+
+        // Alternate left/right, with slight variation
+        const side = (b + j) % 2 === 0 ? 1 : -1;
+        const baseAngle = (branchAngle + (rng() - 0.5) * 18) * Math.PI / 180;
+        const branchAngleRad = side > 0 ? baseAngle : Math.PI - baseAngle;
+
+        const scale = (0.65 + rng() * 0.7) * z;
+        const bLen = branchLen * scale;
+        const nLen = needleLen * scale;
+
+        // Sub-branchlets count (longer branch = more)
+        const numSubs = 2 + Math.floor(rng() * 3);
+
+        ctx.save();
+        ctx.translate(trunkSX, sy);
+
+        // Main branch stem
+        ctx.strokeStyle = '#3a1e08';
+        ctx.lineWidth = Math.max(1, scale * 1.5);
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        const mx = Math.cos(branchAngleRad) * bLen;
+        const my = Math.sin(branchAngleRad) * bLen;
+        ctx.lineTo(mx, my);
+        ctx.stroke();
+
+        // Sub-branchlets along the main branch
+        for (let s = 0; s < numSubs; s++) {
+          const t = (s + 0.5) / numSubs;
+          const bx = Math.cos(branchAngleRad) * bLen * t;
+          const by = Math.sin(branchAngleRad) * bLen * t;
+          // Droop: branchlets angle slightly downward
+          const droopOffset = t * 0.25;
+          const subLen = bLen * (0.35 + (1 - t) * 0.25) * (0.7 + rng() * 0.4);
+          const subAngle = branchAngleRad + droopOffset + (rng() - 0.5) * 0.3;
+
+          ctx.save();
+          ctx.translate(bx, by);
+          drawBranchlet(ctx, subLen, subAngle, nLen, rng);
+          // Mirror sub-branchlet on opposite side (shorter)
+          drawBranchlet(ctx, subLen * 0.75, branchAngleRad * 2 - subAngle + Math.PI * (side > 0 ? 1 : -1) * 0 + droopOffset * 2, nLen, rng);
+          ctx.restore();
+        }
+
+        ctx.restore();
+      }
+    }
+  }
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────
+
+window._patternView = setupCanvas(canvas, render);
+
+bindSlider('trunkSpacing',  v => { trunkSpacing = v; });
+bindSlider('branchDensity', v => { branchDensity = v; });
+bindSlider('branchLen',     v => { branchLen = v; });
+bindSlider('branchAngle',   v => { branchAngle = v; }, v => v + '°');
+bindSlider('needleLen',     v => { needleLen = v; });
+bindSlider('zoom', v => {
+  window._patternView.zoom = v / 100;
+  window._zoomValEl.textContent = v + '%';
+}, v => v + '%');
+bindSeed('seedInput');
+
+window._patternView.redraw();
+</script>
+</body>
+</html>

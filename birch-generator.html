@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Birch Pattern Generator</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { overflow: hidden; background: #111; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; }
+  canvas { display: block; cursor: grab; user-select: none; }
+  canvas:active { cursor: grabbing; }
+
+  #ui {
+    position: fixed;
+    top: 18px;
+    right: 18px;
+    background: rgba(16, 12, 10, 0.88);
+    color: #e8ddd4;
+    padding: 18px 20px;
+    border-radius: 12px;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.07);
+    min-width: 240px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+  #ui h3 {
+    font-size: 15px;
+    font-weight: 600;
+    color: #f0e6dc;
+    letter-spacing: 0.3px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .sep { height: 1px; background: rgba(255,255,255,0.08); margin: 2px 0; }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .row label {
+    flex: 0 0 90px;
+    color: #9a8a7a;
+    font-size: 12px;
+  }
+  .row input[type=range] {
+    flex: 1;
+    accent-color: #b8785a;
+    height: 4px;
+  }
+  .val {
+    flex: 0 0 30px;
+    text-align: right;
+    color: #c8b8a8;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+  .seed-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .seed-row label { color: #9a8a7a; font-size: 12px; }
+  .seed-row input[type=number] {
+    flex: 1;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: #f0e6dc;
+    padding: 5px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    outline: none;
+  }
+  .seed-row input:focus { border-color: #b8785a; }
+  button {
+    background: #b8785a;
+    color: #fff;
+    border: none;
+    padding: 8px 14px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    transition: background 0.15s;
+  }
+  button:hover { background: #cf8e6e; }
+  button.sec {
+    background: rgba(255,255,255,0.08);
+    color: #c8b8a8;
+    font-weight: 500;
+  }
+  button.sec:hover { background: rgba(255,255,255,0.14); }
+  .btns { display: flex; gap: 8px; }
+  .hint {
+    color: #5a4a3a;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  .coords {
+    color: #5a4a3a;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.5px;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <h3>🌿 Берёзовый паттерн</h3>
+  <div class="sep"></div>
+
+  <div class="seed-row">
+    <label>Seed</label>
+    <input type="number" id="seedInput" value="42" min="0" max="9999999">
+    <button class="sec" onclick="randomSeed()" title="Случайный seed">↺</button>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="row">
+    <label>Стволы</label>
+    <input type="range" id="trunkSpacing" min="80" max="320" value="158" oninput="update()">
+    <span class="val" id="trunkSpacingVal">158</span>
+  </div>
+  <div class="row">
+    <label>Плотность</label>
+    <input type="range" id="density" min="3" max="40" value="12" oninput="update()">
+    <span class="val" id="densityVal">12</span>
+  </div>
+  <div class="row">
+    <label>Разброс</label>
+    <input type="range" id="spread" min="0" max="60" value="22" oninput="update()">
+    <span class="val" id="spreadVal">22</span>
+  </div>
+  <div class="row">
+    <label>Размер</label>
+    <input type="range" id="lenticelSize" min="20" max="200" value="100" oninput="update()">
+    <span class="val" id="lenticelSizeVal">100</span>
+  </div>
+  <div class="row">
+    <label>Толщина</label>
+    <input type="range" id="lenticelThick" min="1" max="15" value="5" oninput="update()">
+    <span class="val" id="lenticelThickVal">5</span>
+  </div>
+  <div class="row">
+    <label>Разброс угла</label>
+    <input type="range" id="lenticelAngleSpread" min="0" max="30" value="3" oninput="update()">
+    <span class="val" id="lenticelAngleSpreadVal">±3°</span>
+  </div>
+  <div class="row">
+    <label>Масштаб</label>
+    <input type="range" id="zoom" min="25" max="300" value="100" oninput="update()">
+    <span class="val" id="zoomVal">100%</span>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="btns">
+    <button onclick="exportPNG(2560, 1440)">Сохранить PNG</button>
+    <button class="sec" onclick="resetView()">Сброс вида</button>
+  </div>
+
+  <div class="hint">
+    Перетаскивайте мышью · Колесо = зум<br>
+    Паттерн бесконечен и непериодичен
+  </div>
+  <div class="coords" id="coords">x: 0  y: 0</div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+// View state
+let offsetX = 0, offsetY = 0, zoom = 1;
+let dragging = false, dragStartX = 0, dragStartY = 0, dragOffX = 0, dragOffY = 0;
+
+// Pattern params
+let globalSeed = 42;
+let trunkSpacing = 158;
+let density = 12;     // lenticels per 1000px column height
+let spread = 22;      // horizontal spread from trunk
+let lenticelSize = 100; // base max length
+let lenticelThick = 5;  // base max thickness
+let lenticelAngleSpread = 3; // angle spread in degrees (±)
+
+// ─── Deterministic PRNG ───────────────────────────────────────────────────
+function mulberry32(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6D2B79F5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Mix integers into a single hash (FNV-inspired)
+function hash(...args) {
+  let h = (globalSeed * 2654435761) >>> 0;
+  for (const v of args) {
+    h ^= (v * 2246822519) >>> 0;
+    h = Math.imul(h, 2654435761) >>> 0;
+    h ^= h >>> 16;
+  }
+  return h;
+}
+
+// ─── Drawing helpers ──────────────────────────────────────────────────────
+
+// Lenticel shape: horizontal eye/lens with pointed ends
+function drawLenticel(cx, x, y, len, thick, angle, alpha) {
+  cx.save();
+  cx.translate(x, y);
+  cx.rotate(angle);
+  cx.globalAlpha = alpha;
+
+  // Drop shadow
+  cx.shadowColor = 'rgba(0,0,0,0.28)';
+  cx.shadowBlur = thick * 1.2;
+  cx.shadowOffsetY = thick * 0.4;
+
+  // Main dark fill
+  cx.fillStyle = '#15100a';
+  cx.beginPath();
+  cx.moveTo(-len / 2, 0);
+  cx.bezierCurveTo(-len / 4, -thick, len / 4, -thick, len / 2, 0);
+  cx.bezierCurveTo(len / 4, thick, -len / 4, thick, -len / 2, 0);
+  cx.closePath();
+  cx.fill();
+
+  // Inner highlight strip (top edge)
+  cx.shadowColor = 'transparent';
+  cx.shadowBlur = 0;
+  const g = cx.createLinearGradient(0, -thick, 0, thick);
+  g.addColorStop(0, 'rgba(255,240,215,0.09)');
+  g.addColorStop(0.35, 'rgba(255,255,255,0.00)');
+  g.addColorStop(1, 'rgba(0,0,0,0.18)');
+  cx.fillStyle = g;
+  cx.beginPath();
+  cx.moveTo(-len / 2, 0);
+  cx.bezierCurveTo(-len / 4, -thick, len / 4, -thick, len / 2, 0);
+  cx.bezierCurveTo(len / 4, thick, -len / 4, thick, -len / 2, 0);
+  cx.closePath();
+  cx.fill();
+
+  cx.globalAlpha = 1;
+  cx.restore();
+}
+
+// ─── Main render ──────────────────────────────────────────────────────────
+
+function render(targetCtx, w, h, ox, oy, z) {
+  const cx = targetCtx || ctx;
+  w = w || canvas.width;
+  h = h || canvas.height;
+  ox = ox !== undefined ? ox : offsetX;
+  oy = oy !== undefined ? oy : offsetY;
+  z = z !== undefined ? z : zoom;
+
+  // Background
+  cx.fillStyle = '#e5d8cc';
+  cx.fillRect(0, 0, w, h);
+
+  // World bounds
+  const wx0 = ox / z;
+  const wy0 = oy / z;
+  const wx1 = (ox + w) / z;
+  const wy1 = (oy + h) / z;
+
+  // Cell height for chunked generation (world units)
+  // Larger cell = fewer hash lookups; must be > max lenticel zone
+  const cellH = 200;
+
+  const kMin = Math.floor(wx0 / trunkSpacing) - 1;
+  const kMax = Math.ceil(wx1 / trunkSpacing) + 1;
+  const jMin = Math.floor(wy0 / cellH) - 1;
+  const jMax = Math.ceil(wy1 / cellH) + 1;
+
+  // ── Trunk lines ────────────────────────────────────────────────────────
+  for (let k = kMin; k <= kMax; k++) {
+    const wx = k * trunkSpacing;
+    const sx = wx * z - ox;
+
+    // Per-trunk color variation
+    const rng = mulberry32(hash(k, 0xDEAD));
+    const dr = (rng() - 0.5) * 22;
+    const dg = (rng() - 0.5) * 12;
+    const db = (rng() - 0.5) * 10;
+    const r = Math.round(Math.min(255, Math.max(0, 185 + dr)));
+    const g = Math.round(Math.min(255, Math.max(0, 118 + dg)));
+    const b = Math.round(Math.min(255, Math.max(0, 87 + db)));
+
+    cx.strokeStyle = `rgb(${r},${g},${b})`;
+    cx.lineWidth = Math.max(1, 2 * z);
+    cx.setLineDash([9 * z, 7 * z]);
+    cx.beginPath();
+    cx.moveTo(sx, 0);
+    cx.lineTo(sx, h);
+    cx.stroke();
+    cx.setLineDash([]);
+  }
+
+  // ── Lenticels ──────────────────────────────────────────────────────────
+  // Each cell (k, j) owns lenticels whose Y anchor falls in [j*cellH, (j+1)*cellH).
+  // Lenticels are placed relative to trunk k with a horizontal offset.
+  const lPerCell = Math.max(1, Math.round(density * cellH / 1000));
+
+  for (let k = kMin; k <= kMax; k++) {
+    const wx = k * trunkSpacing;
+    const sx = wx * z - ox;
+
+    for (let j = jMin; j <= jMax; j++) {
+      const rng = mulberry32(hash(k, j));
+
+      for (let i = 0; i < lPerCell; i++) {
+        // Y: uniformly distributed within cell (world coords)
+        const wyL = (j + rng()) * cellH;
+        const syL = wyL * z - oy;
+
+        // Horizontal offset from trunk (world coords), Gaussian-ish via sum
+        const dx = (rng() + rng() + rng() - 1.5) * spread;
+        const sxL = sx + dx * z;
+
+        // Size
+        const baseLen = 28 + rng() * lenticelSize;
+        const len = baseLen * z;
+        const thick = (1 + rng() * lenticelThick) * z;
+
+        // Random angle within spread
+        const angle = (rng() - 0.5) * 2 * lenticelAngleSpread * Math.PI / 180;
+
+        // Slight opacity variation for depth
+        const alpha = 0.82 + rng() * 0.18;
+
+        drawLenticel(cx, sxL, syL, len, thick, angle, alpha);
+      }
+    }
+  }
+}
+
+// ─── Controls ─────────────────────────────────────────────────────────────
+
+function update() {
+  trunkSpacing = +document.getElementById('trunkSpacing').value;
+  document.getElementById('trunkSpacingVal').textContent = trunkSpacing;
+
+  density = +document.getElementById('density').value;
+  document.getElementById('densityVal').textContent = density;
+
+  spread = +document.getElementById('spread').value;
+  document.getElementById('spreadVal').textContent = spread;
+
+  lenticelSize = +document.getElementById('lenticelSize').value;
+  document.getElementById('lenticelSizeVal').textContent = lenticelSize;
+
+  lenticelThick = +document.getElementById('lenticelThick').value;
+  document.getElementById('lenticelThickVal').textContent = lenticelThick;
+
+  lenticelAngleSpread = +document.getElementById('lenticelAngleSpread').value;
+  document.getElementById('lenticelAngleSpreadVal').textContent = '±' + lenticelAngleSpread + '°';
+
+  zoom = +document.getElementById('zoom').value / 100;
+  document.getElementById('zoomVal').textContent =
+    document.getElementById('zoom').value + '%';
+
+  render();
+  updateCoords();
+}
+
+document.getElementById('seedInput').addEventListener('change', e => {
+  globalSeed = (parseInt(e.target.value) || 0) >>> 0;
+  render();
+});
+
+function randomSeed() {
+  globalSeed = Math.floor(Math.random() * 9999999);
+  document.getElementById('seedInput').value = globalSeed;
+  render();
+}
+
+function resetView() {
+  offsetX = 0; offsetY = 0; zoom = 1;
+  document.getElementById('zoom').value = 100;
+  document.getElementById('zoomVal').textContent = '100%';
+  render();
+  updateCoords();
+}
+
+function updateCoords() {
+  const wx = Math.round(offsetX / zoom);
+  const wy = Math.round(offsetY / zoom);
+  document.getElementById('coords').textContent = `x: ${wx}  y: ${wy}  z: ${(zoom * 100).toFixed(0)}%`;
+}
+
+// ─── Interaction ──────────────────────────────────────────────────────────
+
+canvas.addEventListener('mousedown', e => {
+  dragging = true;
+  dragStartX = e.clientX;
+  dragStartY = e.clientY;
+  dragOffX = offsetX;
+  dragOffY = offsetY;
+});
+
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  offsetX = dragOffX - (e.clientX - dragStartX);
+  offsetY = dragOffY - (e.clientY - dragStartY);
+  render();
+  updateCoords();
+});
+
+window.addEventListener('mouseup', () => { dragging = false; });
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const factor = e.deltaY < 0 ? 1.10 : 0.91;
+  const mx = e.clientX, my = e.clientY;
+  offsetX = mx - (mx - offsetX) * factor;
+  offsetY = my - (my - offsetY) * factor;
+  zoom = Math.min(6, Math.max(0.15, zoom * factor));
+  document.getElementById('zoom').value = Math.round(zoom * 100);
+  document.getElementById('zoomVal').textContent = Math.round(zoom * 100) + '%';
+  render();
+  updateCoords();
+}, { passive: false });
+
+// Touch support
+let lastTouchDist = null, lastTouchMidX = 0, lastTouchMidY = 0;
+let touchDragOffX = 0, touchDragOffY = 0;
+
+canvas.addEventListener('touchstart', e => {
+  if (e.touches.length === 1) {
+    dragging = true;
+    dragStartX = e.touches[0].clientX;
+    dragStartY = e.touches[0].clientY;
+    dragOffX = offsetX; dragOffY = offsetY;
+  } else if (e.touches.length === 2) {
+    dragging = false;
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    lastTouchDist = Math.hypot(dx, dy);
+    lastTouchMidX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+    lastTouchMidY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    touchDragOffX = offsetX; touchDragOffY = offsetY;
+  }
+}, { passive: true });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (e.touches.length === 1 && dragging) {
+    offsetX = dragOffX - (e.touches[0].clientX - dragStartX);
+    offsetY = dragOffY - (e.touches[0].clientY - dragStartY);
+    render(); updateCoords();
+  } else if (e.touches.length === 2 && lastTouchDist) {
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    const dist = Math.hypot(dx, dy);
+    const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+    const my = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    const factor = dist / lastTouchDist;
+    offsetX = mx - (lastTouchMidX - touchDragOffX) * factor - (mx - lastTouchMidX);
+    offsetY = my - (lastTouchMidY - touchDragOffY) * factor - (my - lastTouchMidY);
+    zoom = Math.min(6, Math.max(0.15, zoom * factor));
+    lastTouchDist = dist; lastTouchMidX = mx; lastTouchMidY = my;
+    touchDragOffX = offsetX; touchDragOffY = offsetY;
+    render(); updateCoords();
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchend', () => {
+  dragging = false; lastTouchDist = null;
+});
+
+// ─── Export ───────────────────────────────────────────────────────────────
+
+function exportPNG(w, h) {
+  const ec = document.createElement('canvas');
+  ec.width = w; ec.height = h;
+  const ectx = ec.getContext('2d');
+  // Center export on current view
+  const eox = offsetX - (w - canvas.width) / 2;
+  const eoy = offsetY - (h - canvas.height) / 2;
+  render(ectx, w, h, eox, eoy, zoom);
+  const a = document.createElement('a');
+  a.download = `birch-seed${globalSeed}-${w}x${h}.png`;
+  a.href = ec.toDataURL('image/png');
+  a.click();
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  render();
+}
+window.addEventListener('resize', resize);
+resize();
+</script>
+</body>
+</html>

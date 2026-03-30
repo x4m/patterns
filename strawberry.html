@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Земляника — Pattern Generator</title>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <h3>🍓 Земляника</h3>
+  <div class="sep"></div>
+
+  <div class="seed-row">
+    <label>Seed</label>
+    <input type="number" id="seedInput" value="7" min="0" max="9999999">
+    <button class="sec" onclick="randomSeedFn('seedInput')" title="Случайный seed">↺</button>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="row">
+    <label>Плотность</label>
+    <input type="range" id="density" min="1" max="6" value="2" step="0.5">
+    <span class="val" id="densityVal">2</span>
+  </div>
+  <div class="row">
+    <label>Размер</label>
+    <input type="range" id="size" min="20" max="120" value="55">
+    <span class="val" id="sizeVal">55</span>
+  </div>
+  <div class="row">
+    <label>Разброс угла</label>
+    <input type="range" id="angleSpread" min="0" max="180" value="360">
+    <span class="val" id="angleSpreadVal">360°</span>
+  </div>
+  <div class="row">
+    <label>Листья</label>
+    <input type="range" id="leafOpacity" min="0" max="1" value="1" step="0.05">
+    <span class="val" id="leafOpacityVal">1</span>
+  </div>
+  <div class="row">
+    <label>Ягоды</label>
+    <input type="range" id="berryOpacity" min="0" max="1" value="1" step="0.05">
+    <span class="val" id="berryOpacityVal">1</span>
+  </div>
+  <div class="row">
+    <label>Масштаб</label>
+    <input type="range" id="zoom" min="25" max="300" value="100">
+    <span class="val" id="zoomVal">100%</span>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="btns">
+    <button onclick="exportPNG(canvas, render, window._patternSeed)">Сохранить PNG</button>
+    <button class="sec" onclick="window._patternView.resetView()">Сброс вида</button>
+  </div>
+
+  <div class="hint">Перетаскивайте мышью · Колесо = зум</div>
+  <div class="coords" id="coords">x: 0  y: 0</div>
+</div>
+
+<script src="pattern-lib.js"></script>
+<script>
+injectCSS(PATTERN_UI_CSS);
+
+window._patternSeed = 7;
+window._coordsEl = document.getElementById('coords');
+window._zoomEl = document.getElementById('zoom');
+window._zoomValEl = document.getElementById('zoomVal');
+
+const canvas = document.getElementById('c');
+
+// Pattern params
+let density = 2;
+let size = 55;
+let angleSpread = 360;
+let leafOpacity = 1;
+let berryOpacity = 1;
+
+// ─── Drawing ──────────────────────────────────────────────────────────────
+
+// Draw one serrated leaflet of a strawberry leaf.
+// Centered at origin, pointing upward. r = half-length.
+function drawLeaflet(cx, r, rng) {
+  const steps = 24;
+  const serrationDepth = r * 0.12;
+  const serrationFreq = 5 + Math.floor(rng() * 3); // 5-7 teeth
+
+  cx.beginPath();
+  for (let s = 0; s <= steps * 2; s++) {
+    // t goes 0..2π around the leaf outline
+    // We model as an ellipse (r × r*0.55) with serration overlay
+    const t = (s / (steps * 2)) * Math.PI * 2;
+    // Leaf base ellipse
+    const ex = Math.sin(t) * r * 0.52;
+    const ey = -Math.cos(t) * r;
+    // Normal direction (outward from ellipse center)
+    const nx = Math.sin(t);
+    const ny = -Math.cos(t) * 0.52;
+    const nl = Math.hypot(nx, ny);
+    // Serration: modulate radius
+    const serr = Math.sin(t * serrationFreq) * serrationDepth * (0.5 + 0.5 * Math.abs(Math.sin(t)));
+    const px = ex + (nx / nl) * serr;
+    const py = ey + (ny / nl) * serr;
+    s === 0 ? cx.moveTo(px, py) : cx.lineTo(px, py);
+  }
+  cx.closePath();
+}
+
+function drawStrawberryLeaf(cx, x, y, scale, rotation, rng) {
+  cx.save();
+  cx.translate(x, y);
+  cx.rotate(rotation);
+  cx.scale(scale, scale);
+
+  const leafR = 18;
+  const petioleLen = 14;
+
+  // Three leaflets: center and ±40°
+  const angles = [-0.7, 0, 0.7];
+  const offsets = [
+    [-Math.sin(0.7) * petioleLen * 0.6, -Math.cos(0.7) * petioleLen * 0.6],
+    [0, -petioleLen],
+    [Math.sin(0.7) * petioleLen * 0.6, -Math.cos(0.7) * petioleLen * 0.6],
+  ];
+
+  // Petiole
+  cx.strokeStyle = '#3d6b2a';
+  cx.lineWidth = 1.2;
+  cx.beginPath();
+  cx.moveTo(0, 0);
+  cx.lineTo(0, -petioleLen * 0.4);
+  cx.stroke();
+
+  for (let i = 0; i < 3; i++) {
+    cx.save();
+    cx.translate(offsets[i][0], offsets[i][1]);
+    cx.rotate(angles[i]);
+
+    // Leaf fill
+    const g = cx.createRadialGradient(0, -leafR * 0.3, leafR * 0.1, 0, 0, leafR * 1.1);
+    g.addColorStop(0, '#6ab84a');
+    g.addColorStop(1, '#2d5c1a');
+    cx.fillStyle = g;
+    drawLeaflet(cx, leafR, rng);
+    cx.fill();
+
+    // Leaf midrib
+    cx.strokeStyle = 'rgba(30,70,15,0.5)';
+    cx.lineWidth = 0.8;
+    cx.beginPath();
+    cx.moveTo(0, leafR * 0.9);
+    cx.lineTo(0, -leafR * 0.9);
+    cx.stroke();
+
+    cx.restore();
+  }
+
+  cx.restore();
+}
+
+function drawStrawberryBerry(cx, x, y, scale, rotation, rng) {
+  cx.save();
+  cx.translate(x, y);
+  cx.rotate(rotation);
+  cx.scale(scale, scale);
+
+  const r = 14;
+
+  // Berry body: heart-ish shape (wide top, pointed bottom)
+  cx.beginPath();
+  cx.moveTo(0, r * 1.1);
+  cx.bezierCurveTo(-r * 0.9, r * 0.4, -r * 1.05, -r * 0.4, -r * 0.55, -r * 0.75);
+  cx.bezierCurveTo(-r * 0.2, -r * 1.1, r * 0.2, -r * 1.1, r * 0.55, -r * 0.75);
+  cx.bezierCurveTo(r * 1.05, -r * 0.4, r * 0.9, r * 0.4, 0, r * 1.1);
+  cx.closePath();
+
+  const g = cx.createRadialGradient(-r * 0.2, -r * 0.3, r * 0.1, 0, 0, r * 1.2);
+  g.addColorStop(0, '#ff6b5a');
+  g.addColorStop(0.5, '#d42c1a');
+  g.addColorStop(1, '#8b1a0a');
+  cx.fillStyle = g;
+  cx.shadowColor = 'rgba(0,0,0,0.3)';
+  cx.shadowBlur = 4;
+  cx.shadowOffsetY = 2;
+  cx.fill();
+  cx.shadowColor = 'transparent';
+
+  // Seeds (achenes) — small oval dots scattered on surface
+  const seedCount = 14 + Math.floor(rng() * 6);
+  for (let i = 0; i < seedCount; i++) {
+    // Place seeds roughly on berry surface
+    const angle = rng() * Math.PI * 2;
+    const dist = rng() * r * 0.85;
+    const sx = Math.cos(angle) * dist * 0.75;
+    const sy = Math.sin(angle) * dist * 0.9 + r * 0.05;
+    cx.fillStyle = 'rgba(255,220,180,0.75)';
+    cx.beginPath();
+    cx.ellipse(sx, sy, 1.2, 0.8, angle, 0, Math.PI * 2);
+    cx.fill();
+  }
+
+  // Small green calyx at top
+  cx.fillStyle = '#4a8a30';
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2 - Math.PI / 2;
+    cx.save();
+    cx.translate(0, -r * 0.75);
+    cx.rotate(a);
+    cx.beginPath();
+    cx.moveTo(0, 0);
+    cx.bezierCurveTo(-2, -5, -1, -9, 0, -10);
+    cx.bezierCurveTo(1, -9, 2, -5, 0, 0);
+    cx.fill();
+    cx.restore();
+  }
+
+  cx.restore();
+}
+
+// ─── Render ───────────────────────────────────────────────────────────────
+
+function render(ctx, w, h, ox, oy, z) {
+  ctx.fillStyle = '#f5f0e8';
+  ctx.fillRect(0, 0, w, h);
+
+  const cellW = 160, cellH = 160;
+  const wx0 = ox / z, wy0 = oy / z;
+  const wx1 = (ox + w) / z, wy1 = (oy + h) / z;
+
+  const iMin = Math.floor(wx0 / cellW) - 1, iMax = Math.ceil(wx1 / cellW) + 1;
+  const jMin = Math.floor(wy0 / cellH) - 1, jMax = Math.ceil(wy1 / cellH) + 1;
+
+  const itemsPerCell = Math.max(1, Math.round(density));
+
+  for (let i = iMin; i <= iMax; i++) {
+    for (let j = jMin; j <= jMax; j++) {
+      const rng = mulberry32(hashN(i, j));
+
+      for (let k = 0; k < itemsPerCell; k++) {
+        const wx = (i + rng()) * cellW;
+        const wy = (j + rng()) * cellH;
+        const sx = wx * z - ox;
+        const sy = wy * z - oy;
+
+        const sc = (0.6 + rng() * 0.8) * z;
+        const rot = (rng() - 0.5) * 2 * (angleSpread / 360) * Math.PI;
+        const variant = rng(); // 0..1: low=leaf, high=berry, mid=both
+
+        if (leafOpacity > 0) {
+          ctx.globalAlpha = leafOpacity * (0.8 + rng() * 0.2);
+          if (variant < 0.7) drawStrawberryLeaf(ctx, sx, sy, sc, rot, rng);
+        }
+        if (berryOpacity > 0) {
+          ctx.globalAlpha = berryOpacity * (0.85 + rng() * 0.15);
+          if (variant > 0.35) drawStrawberryBerry(ctx, sx, sy, sc * 0.9, rot + (rng() - 0.5) * 0.4, rng);
+        }
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────
+
+window._patternView = setupCanvas(canvas, render);
+
+bindSlider('density',      v => { density = v; });
+bindSlider('size',         v => { size = v; });
+bindSlider('angleSpread',  v => { angleSpread = v; }, v => v + '°');
+bindSlider('leafOpacity',  v => { leafOpacity = v; });
+bindSlider('berryOpacity', v => { berryOpacity = v; });
+bindSlider('zoom',         v => {
+  window._patternView.zoom = v / 100;
+  window._zoomValEl.textContent = v + '%';
+}, v => v + '%');
+bindSeed('seedInput');
+
+window._patternView.redraw();
+</script>
+</body>
+</html>

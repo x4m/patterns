@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Реки — Pattern Generator</title>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <h3>🌊 Реки</h3>
+  <div class="sep"></div>
+
+  <div class="seed-row">
+    <label>Seed</label>
+    <input type="number" id="seedInput" value="55" min="0" max="9999999">
+    <button class="sec" onclick="randomSeedFn('seedInput')" title="Случайный seed">↺</button>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="row">
+    <label>Расстояние</label>
+    <input type="range" id="riverSpacing" min="80" max="400" value="200">
+    <span class="val" id="riverSpacingVal">200</span>
+  </div>
+  <div class="row">
+    <label>Ширина</label>
+    <input type="range" id="riverWidth" min="4" max="80" value="22">
+    <span class="val" id="riverWidthVal">22</span>
+  </div>
+  <div class="row">
+    <label>Меандр</label>
+    <input type="range" id="meander" min="0" max="100" value="40">
+    <span class="val" id="meanderVal">40</span>
+  </div>
+  <div class="row">
+    <label>Скорость волны</label>
+    <input type="range" id="waveSpeed" min="1" max="20" value="6">
+    <span class="val" id="waveSpeedVal">6</span>
+  </div>
+  <div class="row">
+    <label>Берег</label>
+    <input type="range" id="bankWidth" min="0" max="30" value="8">
+    <span class="val" id="bankWidthVal">8</span>
+  </div>
+  <div class="row">
+    <label>Рябь</label>
+    <input type="range" id="ripples" min="0" max="1" value="0.6" step="0.05">
+    <span class="val" id="ripplesVal">0.6</span>
+  </div>
+  <div class="row">
+    <label>Масштаб</label>
+    <input type="range" id="zoom" min="25" max="300" value="100">
+    <span class="val" id="zoomVal">100%</span>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="btns">
+    <button onclick="exportPNG(canvas, render, window._patternSeed)">Сохранить PNG</button>
+    <button class="sec" onclick="window._patternView.resetView()">Сброс вида</button>
+  </div>
+
+  <div class="hint">Перетаскивайте мышью · Колесо = зум</div>
+  <div class="coords" id="coords">x: 0  y: 0</div>
+</div>
+
+<script src="pattern-lib.js"></script>
+<script>
+injectCSS(PATTERN_UI_CSS);
+
+window._patternSeed = 55;
+window._coordsEl = document.getElementById('coords');
+window._zoomEl = document.getElementById('zoom');
+window._zoomValEl = document.getElementById('zoomVal');
+
+const canvas = document.getElementById('c');
+
+let riverSpacing = 200;
+let riverWidth = 22;
+let meander = 40;
+let waveSpeed = 6;
+let bankWidth = 8;
+let ripples = 0.6;
+
+// ─── River geometry ───────────────────────────────────────────────────────
+
+// Each river k has its own sine parameters derived from a hash.
+// Returns the world-x of river k at world-y wy.
+function getRiverX(k, wy) {
+  const rng = mulberry32(hashN(k, 0x5AFE));
+  const s = riverSpacing;
+  const m = meander / 100;
+  // Three sine harmonics with different frequencies and phases
+  const A1 = (0.12 + rng() * 0.16) * s * m;
+  const f1 = (0.8 + rng() * 1.2) * waveSpeed * 0.0003;
+  const p1 = rng() * Math.PI * 2;
+  const A2 = (0.04 + rng() * 0.07) * s * m;
+  const f2 = (2.0 + rng() * 3.0) * waveSpeed * 0.0003;
+  const p2 = rng() * Math.PI * 2;
+  const A3 = (0.01 + rng() * 0.025) * s * m;
+  const f3 = (8 + rng() * 10) * waveSpeed * 0.0003;
+  const p3 = rng() * Math.PI * 2;
+  return k * s + A1 * Math.sin(f1 * wy + p1)
+              + A2 * Math.sin(f2 * wy + p2)
+              + A3 * Math.sin(f3 * wy + p3);
+}
+
+// Width modulation: rivers narrow at tight bends
+function getRiverWidthAt(k, wy) {
+  const rng = mulberry32(hashN(k, 0xB04A));
+  const f = (1.5 + rng() * 2.0) * waveSpeed * 0.0003;
+  const p = rng() * Math.PI * 2;
+  return riverWidth * (0.7 + 0.5 * (0.5 + 0.5 * Math.sin(f * wy + p)));
+}
+
+// ─── Drawing ──────────────────────────────────────────────────────────────
+
+function buildRiverPath(k, sy0, sy1, ox, oy, z, side, widthMult) {
+  // side: +1 = right edge, -1 = left edge
+  // Returns array of screen points
+  const step = Math.max(3, 6 / z); // pixel step in screen space
+  const points = [];
+  for (let sy = sy0; sy <= sy1 + step; sy += step) {
+    const wy = (sy + oy) / z;
+    const wx = getRiverX(k, wy);
+    const hw = getRiverWidthAt(k, wy) * widthMult / 2;
+    const sx = wx * z - ox + side * hw * z;
+    points.push({ x: sx, y: sy });
+  }
+  return points;
+}
+
+function drawRiver(ctx, k, screenY0, screenY1, ox, oy, z) {
+  const step = Math.max(3, 6 / z);
+
+  // ── Bank shadow (wider fill) ────────────────────────────────────────
+  if (bankWidth > 0) {
+    const bankMult = 1 + bankWidth * 2 / riverWidth;
+    const rightBank = buildRiverPath(k, screenY0, screenY1, ox, oy, z, 1, bankMult);
+    const leftBank  = buildRiverPath(k, screenY0, screenY1, ox, oy, z, -1, bankMult);
+
+    ctx.beginPath();
+    ctx.moveTo(rightBank[0].x, rightBank[0].y);
+    for (const p of rightBank) ctx.lineTo(p.x, p.y);
+    for (let i = leftBank.length - 1; i >= 0; i--) ctx.lineTo(leftBank[i].x, leftBank[i].y);
+    ctx.closePath();
+
+    const bankGrad = ctx.createLinearGradient(0, screenY0, 0, screenY1);
+    bankGrad.addColorStop(0, 'rgba(55,72,40,0.6)');
+    bankGrad.addColorStop(0.5, 'rgba(48,65,35,0.7)');
+    bankGrad.addColorStop(1, 'rgba(55,72,40,0.6)');
+    ctx.fillStyle = bankGrad;
+    ctx.fill();
+  }
+
+  // ── Water body ─────────────────────────────────────────────────────
+  const rightEdge = buildRiverPath(k, screenY0, screenY1, ox, oy, z, 1, 1);
+  const leftEdge  = buildRiverPath(k, screenY0, screenY1, ox, oy, z, -1, 1);
+
+  ctx.beginPath();
+  ctx.moveTo(rightEdge[0].x, rightEdge[0].y);
+  for (const p of rightEdge) ctx.lineTo(p.x, p.y);
+  for (let i = leftEdge.length - 1; i >= 0; i--) ctx.lineTo(leftEdge[i].x, leftEdge[i].y);
+  ctx.closePath();
+
+  // Water color: deeper blue in center, lighter near edges
+  const rng = mulberry32(hashN(k, 0xC0A0));
+  const blueShift = Math.round((rng() - 0.5) * 20);
+  const g1 = `rgba(${90 + blueShift},${138 + blueShift},${175 + blueShift},0.92)`;
+  const g2 = `rgba(${65 + blueShift},${108 + blueShift},${148 + blueShift},0.95)`;
+
+  ctx.fillStyle = g2;
+  ctx.fill();
+
+  // ── Ripples ────────────────────────────────────────────────────────
+  if (ripples > 0.05) {
+    ctx.save();
+    ctx.clip(); // clip ripples inside water body
+
+    const ripRng = mulberry32(hashN(k, 0xA1B2));
+    const rippleStep = Math.max(8, 24 / z);
+
+    ctx.strokeStyle = `rgba(180,210,235,${ripples * 0.35})`;
+    ctx.lineWidth = Math.max(0.5, 1.2 * z);
+
+    for (let sy = screenY0; sy < screenY1; sy += rippleStep * (0.7 + ripRng() * 0.6)) {
+      const wy = (sy + oy) / z;
+      const wx = getRiverX(k, wy);
+      const hw = getRiverWidthAt(k, wy) / 2 * z;
+      const scx = wx * z - ox;
+
+      // Ripple: short curved line across river
+      const ripLen = hw * (0.3 + ripRng() * 0.5);
+      const ripX = scx + (ripRng() - 0.5) * hw * 0.6;
+
+      ctx.beginPath();
+      ctx.moveTo(ripX - ripLen, sy);
+      ctx.bezierCurveTo(
+        ripX - ripLen * 0.3, sy - 3 * z,
+        ripX + ripLen * 0.3, sy - 3 * z,
+        ripX + ripLen, sy
+      );
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+// ─── Render ───────────────────────────────────────────────────────────────
+
+function render(ctx, w, h, ox, oy, z) {
+  // Background: forest floor / meadow
+  ctx.fillStyle = '#c8d4a8';
+  ctx.fillRect(0, 0, w, h);
+
+  // Subtle ground texture: slightly varied green patches
+  const bgRng = mulberry32(hashN(0, 0, 0x6E0));
+  for (let i = 0; i < 180; i++) {
+    const tx = bgRng() * w;
+    const ty = bgRng() * h;
+    const tr = (4 + bgRng() * 18) * z;
+    const alpha = 0.04 + bgRng() * 0.07;
+    const dark = bgRng() > 0.5;
+    ctx.fillStyle = dark ? `rgba(80,110,45,${alpha})` : `rgba(180,200,130,${alpha})`;
+    ctx.beginPath();
+    ctx.arc(tx, ty, tr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const wx0 = ox / z, wx1 = (ox + w) / z;
+  const kMin = Math.floor(wx0 / riverSpacing) - 1;
+  const kMax = Math.ceil(wx1 / riverSpacing) + 1;
+
+  for (let k = kMin; k <= kMax; k++) {
+    drawRiver(ctx, k, -20, h + 20, ox, oy, z);
+  }
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────
+
+window._patternView = setupCanvas(canvas, render);
+
+bindSlider('riverSpacing', v => { riverSpacing = v; });
+bindSlider('riverWidth',   v => { riverWidth = v; });
+bindSlider('meander',      v => { meander = v; });
+bindSlider('waveSpeed',    v => { waveSpeed = v; });
+bindSlider('bankWidth',    v => { bankWidth = v; });
+bindSlider('ripples',      v => { ripples = v; });
+bindSlider('zoom', v => {
+  window._patternView.zoom = v / 100;
+  window._zoomValEl.textContent = v + '%';
+}, v => v + '%');
+bindSeed('seedInput');
+
+window._patternView.redraw();
+</script>
+</body>
+</html>

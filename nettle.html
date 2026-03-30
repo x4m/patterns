@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Крапива — Pattern Generator</title>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <h3>🌿 Крапива</h3>
+  <div class="sep"></div>
+
+  <div class="seed-row">
+    <label>Seed</label>
+    <input type="number" id="seedInput" value="13" min="0" max="9999999">
+    <button class="sec" onclick="randomSeedFn('seedInput')" title="Случайный seed">↺</button>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="row">
+    <label>Плотность</label>
+    <input type="range" id="density" min="1" max="6" value="2" step="0.5">
+    <span class="val" id="densityVal">2</span>
+  </div>
+  <div class="row">
+    <label>Размер</label>
+    <input type="range" id="size" min="20" max="130" value="60">
+    <span class="val" id="sizeVal">60</span>
+  </div>
+  <div class="row">
+    <label>Зубцы</label>
+    <input type="range" id="serrationDepth" min="0" max="1" value="0.28" step="0.01">
+    <span class="val" id="serrationDepthVal">0.28</span>
+  </div>
+  <div class="row">
+    <label>Частота зубцов</label>
+    <input type="range" id="serrationFreq" min="4" max="20" value="9" step="1">
+    <span class="val" id="serrationFreqVal">9</span>
+  </div>
+  <div class="row">
+    <label>Разброс угла</label>
+    <input type="range" id="angleSpread" min="0" max="180" value="360">
+    <span class="val" id="angleSpreadVal">360°</span>
+  </div>
+  <div class="row">
+    <label>Листья / стебли</label>
+    <input type="range" id="stemMode" min="0" max="1" value="0.5" step="0.05">
+    <span class="val" id="stemModeVal">0.5</span>
+  </div>
+  <div class="row">
+    <label>Масштаб</label>
+    <input type="range" id="zoom" min="25" max="300" value="100">
+    <span class="val" id="zoomVal">100%</span>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="btns">
+    <button onclick="exportPNG(canvas, render, window._patternSeed)">Сохранить PNG</button>
+    <button class="sec" onclick="window._patternView.resetView()">Сброс вида</button>
+  </div>
+
+  <div class="hint">Перетаскивайте мышью · Колесо = зум</div>
+  <div class="coords" id="coords">x: 0  y: 0</div>
+</div>
+
+<script src="pattern-lib.js"></script>
+<script>
+injectCSS(PATTERN_UI_CSS);
+
+window._patternSeed = 13;
+window._coordsEl = document.getElementById('coords');
+window._zoomEl = document.getElementById('zoom');
+window._zoomValEl = document.getElementById('zoomVal');
+
+const canvas = document.getElementById('c');
+
+// Pattern params
+let density = 2;
+let size = 60;
+let serrationDepth = 0.28;
+let serrationFreq = 9;
+let angleSpread = 360;
+let stemMode = 0.5; // 0=only leaves, 1=only stems
+
+// ─── Drawing ──────────────────────────────────────────────────────────────
+
+// Draw a single nettle leaf. Origin at base (petiole attachment), leaf extends upward.
+// length = half-height of leaf body
+function drawNettleLeaf(cx, length, rng) {
+  const w = length * 0.58; // half-width at widest point
+  const steps = 80; // points along each half of the outline
+
+  // Leaf profile: parametric t=0 (tip) to 1 (base)
+  // Width profile: sin-based, widest at ~40% from base
+  function profile(t) {
+    return Math.sin(t * Math.PI) * (0.7 + 0.6 * Math.sin(t * Math.PI * 0.7));
+  }
+
+  cx.beginPath();
+
+  // Right side: from base (bottom) to tip (top)
+  for (let s = 0; s <= steps; s++) {
+    const t = s / steps;
+    const y = -t * length * 2 + length; // from +length (base) to -length (tip)
+    const baseW = profile(t) * w;
+    // Serration: oscillate outward along the edge
+    const toothPhase = t * serrationFreq * Math.PI * 2;
+    const tooth = Math.sin(toothPhase) * serrationDepth * baseW * Math.sin(t * Math.PI);
+    const x = baseW + tooth;
+    s === 0 ? cx.moveTo(x, y) : cx.lineTo(x, y);
+  }
+
+  // Left side: from tip back to base
+  for (let s = steps; s >= 0; s--) {
+    const t = s / steps;
+    const y = -t * length * 2 + length;
+    const baseW = profile(t) * w;
+    const toothPhase = t * serrationFreq * Math.PI * 2 + Math.PI; // offset phase for asymmetry
+    const tooth = Math.sin(toothPhase) * serrationDepth * baseW * Math.sin(t * Math.PI);
+    cx.lineTo(-(baseW + tooth), y);
+  }
+
+  cx.closePath();
+}
+
+function fillNettleLeaf(cx, length, colorVariant, rng) {
+  const r1 = Math.round(55 + colorVariant * 20);
+  const g1 = Math.round(105 + colorVariant * 30);
+  const b1 = Math.round(35 + colorVariant * 15);
+  const r2 = Math.round(28 + colorVariant * 10);
+  const g2 = Math.round(60 + colorVariant * 15);
+  const b2 = Math.round(15 + colorVariant * 8);
+
+  const g = cx.createLinearGradient(0, length, 0, -length);
+  g.addColorStop(0, `rgb(${r2},${g2},${b2})`);
+  g.addColorStop(0.4, `rgb(${r1},${g1},${b1})`);
+  g.addColorStop(1, `rgb(${r2},${g2},${b2})`);
+  cx.fillStyle = g;
+  drawNettleLeaf(cx, length, rng);
+  cx.fill();
+
+  // Midrib and veins
+  cx.strokeStyle = `rgba(${r2},${g2},${b2},0.55)`;
+  cx.lineWidth = Math.max(0.5, length * 0.025);
+  cx.beginPath();
+  cx.moveTo(0, length);
+  cx.lineTo(0, -length * 0.92);
+  cx.stroke();
+
+  // Side veins
+  const veinCount = 5;
+  cx.lineWidth = Math.max(0.3, length * 0.012);
+  for (let i = 1; i <= veinCount; i++) {
+    const t = i / (veinCount + 1);
+    const vy = length - t * length * 1.9;
+    const vx = length * 0.55 * Math.sin(t * Math.PI);
+    cx.beginPath();
+    cx.moveTo(0, vy);
+    cx.quadraticCurveTo(vx * 0.5, vy - length * 0.08, vx, vy - length * 0.18);
+    cx.stroke();
+    cx.beginPath();
+    cx.moveTo(0, vy);
+    cx.quadraticCurveTo(-vx * 0.5, vy - length * 0.08, -vx, vy - length * 0.18);
+    cx.stroke();
+  }
+}
+
+// Draw a stem with opposite pairs of leaves at nodes
+function drawNettleStem(cx, totalHeight, leafSize, colorVariant, rng) {
+  const nodeCount = 2 + Math.floor(rng() * 3); // 2-4 node pairs
+  const nodeSpacing = totalHeight / (nodeCount + 1);
+
+  // Main stem
+  cx.strokeStyle = '#3a5c22';
+  cx.lineWidth = Math.max(1, leafSize * 0.04);
+  cx.beginPath();
+  cx.moveTo(0, totalHeight / 2);
+  cx.lineTo(0, -totalHeight / 2);
+  cx.stroke();
+
+  for (let n = 0; n < nodeCount; n++) {
+    const ny = totalHeight / 2 - (n + 1) * nodeSpacing;
+    const leafScale = (0.5 + (n / nodeCount) * 0.5) * leafSize;
+    const pairAngle = n * 0.3; // slight rotation per pair
+
+    // Left leaf
+    cx.save();
+    cx.translate(-leafScale * 0.15, ny);
+    cx.rotate(Math.PI / 2 + 0.3 + pairAngle + (rng() - 0.5) * 0.2);
+    fillNettleLeaf(cx, leafScale, colorVariant, rng);
+    cx.restore();
+
+    // Right leaf
+    cx.save();
+    cx.translate(leafScale * 0.15, ny);
+    cx.rotate(-Math.PI / 2 - 0.3 - pairAngle + (rng() - 0.5) * 0.2);
+    fillNettleLeaf(cx, leafScale, colorVariant, rng);
+    cx.restore();
+  }
+
+  // Terminal leaf at top
+  cx.save();
+  cx.translate(0, -totalHeight / 2);
+  cx.rotate((rng() - 0.5) * 0.15);
+  fillNettleLeaf(cx, leafSize * 0.55, colorVariant, rng);
+  cx.restore();
+}
+
+// ─── Render ───────────────────────────────────────────────────────────────
+
+function render(ctx, w, h, ox, oy, z) {
+  ctx.fillStyle = '#eef2e8';
+  ctx.fillRect(0, 0, w, h);
+
+  const cellW = 170, cellH = 170;
+  const wx0 = ox / z, wy0 = oy / z;
+  const wx1 = (ox + w) / z, wy1 = (oy + h) / z;
+
+  const iMin = Math.floor(wx0 / cellW) - 1, iMax = Math.ceil(wx1 / cellW) + 1;
+  const jMin = Math.floor(wy0 / cellH) - 1, jMax = Math.ceil(wy1 / cellH) + 1;
+
+  const itemsPerCell = Math.max(1, Math.round(density));
+
+  for (let i = iMin; i <= iMax; i++) {
+    for (let j = jMin; j <= jMax; j++) {
+      const rng = mulberry32(hashN(i, j));
+
+      for (let k = 0; k < itemsPerCell; k++) {
+        const wx = (i + rng()) * cellW;
+        const wy = (j + rng()) * cellH;
+        const sx = wx * z - ox;
+        const sy = wy * z - oy;
+
+        const sc = (0.55 + rng() * 0.9) * z;
+        const rot = (rng() - 0.5) * 2 * (angleSpread / 360) * Math.PI;
+        const colorVar = rng(); // color variation 0..1
+        const isStem = rng() < stemMode;
+
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(rot);
+        ctx.globalAlpha = 0.82 + rng() * 0.18;
+
+        if (isStem) {
+          drawNettleStem(ctx, size * sc, size * 0.28, colorVar, rng);
+        } else {
+          const leafLen = size * 0.5 * sc;
+          ctx.shadowColor = 'rgba(0,0,0,0.15)';
+          ctx.shadowBlur = 3 * z;
+          ctx.shadowOffsetY = 1.5 * z;
+          fillNettleLeaf(ctx, leafLen, colorVar, rng);
+          ctx.shadowColor = 'transparent';
+        }
+
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+    }
+  }
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────
+
+window._patternView = setupCanvas(canvas, render);
+
+bindSlider('density',        v => { density = v; });
+bindSlider('size',           v => { size = v; });
+bindSlider('serrationDepth', v => { serrationDepth = v; });
+bindSlider('serrationFreq',  v => { serrationFreq = v; });
+bindSlider('angleSpread',    v => { angleSpread = v; }, v => v + '°');
+bindSlider('stemMode',       v => { stemMode = v; });
+bindSlider('zoom',           v => {
+  window._patternView.zoom = v / 100;
+  window._zoomValEl.textContent = v + '%';
+}, v => v + '%');
+bindSeed('seedInput');
+
+window._patternView.redraw();
+</script>
+</body>
+</html>

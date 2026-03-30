@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Камни — Pattern Generator</title>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <h3>🪨 Камни</h3>
+  <div class="sep"></div>
+
+  <div class="seed-row">
+    <label>Seed</label>
+    <input type="number" id="seedInput" value="17" min="0" max="9999999">
+    <button class="sec" onclick="randomSeedFn('seedInput')" title="Случайный seed">↺</button>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="row">
+    <label>Размер камней</label>
+    <input type="range" id="stoneSize" min="30" max="200" value="80">
+    <span class="val" id="stoneSizeVal">80</span>
+  </div>
+  <div class="row">
+    <label>Зазор</label>
+    <input type="range" id="gapWidth" min="1" max="18" value="5">
+    <span class="val" id="gapWidthVal">5</span>
+  </div>
+  <div class="row">
+    <label>Сглаживание</label>
+    <input type="range" id="smoothing" min="0" max="1" value="0.38" step="0.01">
+    <span class="val" id="smoothingVal">0.38</span>
+  </div>
+  <div class="row">
+    <label>Мох</label>
+    <input type="range" id="mossAmount" min="0" max="1" value="0.35" step="0.01">
+    <span class="val" id="mossAmountVal">0.35</span>
+  </div>
+  <div class="row">
+    <label>Тёмность</label>
+    <input type="range" id="darkness" min="0" max="1" value="0.5" step="0.01">
+    <span class="val" id="darknessVal">0.5</span>
+  </div>
+  <div class="row">
+    <label>Масштаб</label>
+    <input type="range" id="zoom" min="25" max="300" value="100">
+    <span class="val" id="zoomVal">100%</span>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="btns">
+    <button onclick="exportPNG(canvas, render, window._patternSeed)">Сохранить PNG</button>
+    <button class="sec" onclick="window._patternView.resetView()">Сброс вида</button>
+  </div>
+
+  <div class="hint">Перетаскивайте мышью · Колесо = зум</div>
+  <div class="coords" id="coords">x: 0  y: 0</div>
+</div>
+
+<script src="pattern-lib.js"></script>
+<script>
+injectCSS(PATTERN_UI_CSS);
+
+window._patternSeed = 17;
+window._coordsEl = document.getElementById('coords');
+window._zoomEl = document.getElementById('zoom');
+window._zoomValEl = document.getElementById('zoomVal');
+
+const canvas = document.getElementById('c');
+
+let stoneSize = 80;
+let gapWidth = 5;
+let smoothing = 0.38;
+let mossAmount = 0.35;
+let darkness = 0.5;
+
+// ─── Infinite Voronoi (Worley noise approach) ─────────────────────────────
+// For each grid cell (ci, cj), generate one seed point with deterministic jitter.
+// To find the Voronoi cell of any world point P, check the 3×3 neighborhood of
+// grid cells around P and find the nearest seed.
+
+function getSeedPoint(ci, cj, cellSize) {
+  const rng = mulberry32(hashN(ci, cj));
+  return {
+    x: (ci + 0.15 + rng() * 0.7) * cellSize,
+    y: (cj + 0.15 + rng() * 0.7) * cellSize,
+    rng, // carry rng for per-stone properties
+  };
+}
+
+// Get seed point and its color/moss properties
+function getSeedProps(ci, cj) {
+  const rng = mulberry32(hashN(ci, cj, 0xC0FFEE));
+  return {
+    colorShift: rng() * 2 - 1,       // -1..1
+    satShift: rng() * 0.5,
+    hasMoss: rng() < mossAmount,
+    mossIntensity: rng(),
+    crack: rng() < 0.3,
+  };
+}
+
+// ─── Pixel-based Voronoi renderer ────────────────────────────────────────
+// Instead of clipping polygons (slow), we render to an offscreen ImageData
+// by computing nearest Voronoi seed per pixel.
+// But for large canvases this is too slow. Instead:
+// We draw each Voronoi cell as a clipped polygon using the perpendicular
+// bisector approach — but only for cells near the viewport.
+
+// Actually: efficient approach — for each visible grid cell, draw an
+// approximated polygon by sampling the Voronoi boundary.
+// We use a "shrunk polygon" approach: take the seed point, find neighboring
+// seeds, compute bisector midpoints, build a convex-ish hull.
+
+function getNeighborSeeds(ci, cj, cellSize) {
+  const seeds = [];
+  for (let di = -2; di <= 2; di++) {
+    for (let dj = -2; dj <= 2; dj++) {
+      seeds.push({ ci: ci + di, cj: cj + dj, ...getSeedPoint(ci + di, cj + dj, cellSize) });
+    }
+  }
+  return seeds;
+}
+
+// Compute the Voronoi polygon for cell (ci, cj) using half-plane intersection.
+// Returns array of {x, y} vertices (may be null if degenerate).
+function voronoiPolygon(ci, cj, cellSize, padding) {
+  const center = getSeedPoint(ci, cj, cellSize);
+  const neighbors = [];
+  for (let di = -2; di <= 2; di++) {
+    for (let dj = -2; dj <= 2; dj++) {
+      if (di === 0 && dj === 0) continue;
+      neighbors.push(getSeedPoint(ci + di, cj + dj, cellSize));
+    }
+  }
+
+  // Start with a large bounding polygon
+  const R = cellSize * 2.5;
+  let poly = [
+    { x: center.x - R, y: center.y - R },
+    { x: center.x + R, y: center.y - R },
+    { x: center.x + R, y: center.y + R },
+    { x: center.x - R, y: center.y + R },
+  ];
+
+  for (const nb of neighbors) {
+    // Half-plane: points closer to center than to nb
+    // Bisector: midpoint between center and nb, normal toward center
+    const mx = (center.x + nb.x) / 2;
+    const my = (center.y + nb.y) / 2;
+    const nx = center.x - nb.x; // normal pointing to center side
+    const ny = center.y - nb.y;
+
+    // Clip poly by this half-plane
+    poly = clipPolyByHalfPlane(poly, mx, my, nx, ny, padding);
+    if (poly.length < 3) return null;
+  }
+  return poly;
+}
+
+// Sutherland-Hodgman clip of convex polygon by half-plane defined by
+// point (px,py) on boundary and inward normal (nx,ny).
+// padding shrinks the polygon inward.
+function clipPolyByHalfPlane(poly, px, py, nx, ny, padding) {
+  const len = Math.hypot(nx, ny);
+  const nnx = nx / len, nny = ny / len;
+  // Shift boundary inward by padding
+  const bpx = px + nnx * padding;
+  const bpy = py + nny * padding;
+
+  function inside(p) {
+    return (p.x - bpx) * nnx + (p.y - bpy) * nny >= 0;
+  }
+  function intersect(a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const t = ((bpx - a.x) * nnx + (bpy - a.y) * nny) / (dx * nnx + dy * nny);
+    return { x: a.x + t * dx, y: a.y + t * dy };
+  }
+
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const cur = poly[i];
+    const nxt = poly[(i + 1) % poly.length];
+    const curIn = inside(cur);
+    const nxtIn = inside(nxt);
+    if (curIn) out.push(cur);
+    if (curIn !== nxtIn) out.push(intersect(cur, nxt));
+  }
+  return out;
+}
+
+// Smooth a polygon by replacing each vertex with a bezier control point
+function smoothPoly(poly, factor) {
+  if (factor < 0.01 || poly.length < 3) return poly;
+  // Chaikin's algorithm — repeated subdivision
+  let pts = poly;
+  const passes = Math.round(1 + factor * 3);
+  for (let p = 0; p < passes; p++) {
+    const next = [];
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % pts.length];
+      next.push({ x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25 });
+      next.push({ x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75 });
+    }
+    pts = next;
+  }
+  return pts;
+}
+
+function stoneColor(props, z) {
+  const base = 145 + props.colorShift * 30 - darkness * 35;
+  const r = Math.round(Math.min(220, Math.max(60, base + 18 + props.satShift * 15)));
+  const g = Math.round(Math.min(210, Math.max(55, base + 8)));
+  const b = Math.round(Math.min(200, Math.max(50, base - 12 - props.satShift * 20)));
+  return `rgb(${r},${g},${b})`;
+}
+
+function mossPatch(cx, poly, seed, intensity, z) {
+  // Draw irregular moss splotches along lower/shadowed parts of stone
+  const rng = mulberry32(seed);
+  const count = 3 + Math.floor(rng() * 4);
+  // Find centroid
+  let cx2 = 0, cy2 = 0;
+  for (const p of poly) { cx2 += p.x; cy2 += p.y; }
+  cx2 /= poly.length; cy2 /= poly.length;
+
+  for (let i = 0; i < count; i++) {
+    const idx = Math.floor(rng() * poly.length);
+    const p = poly[idx];
+    // Mix between edge and center, biased to lower-left
+    const t = 0.25 + rng() * 0.5;
+    const mx = p.x * t + cx2 * (1 - t) + (rng() - 0.3) * 8;
+    const my = p.y * t + cy2 * (1 - t) + rng() * 6;
+    const r = (4 + rng() * 12) * Math.max(0.5, z);
+    const alpha = 0.12 + intensity * 0.22 + rng() * 0.1;
+
+    const g = cx.createRadialGradient(mx, my, 0, mx, my, r);
+    g.addColorStop(0, `rgba(55,95,30,${alpha})`);
+    g.addColorStop(1, `rgba(40,70,18,0)`);
+    cx.fillStyle = g;
+    cx.beginPath();
+    cx.arc(mx, my, r, 0, Math.PI * 2);
+    cx.fill();
+  }
+}
+
+// ─── Render ───────────────────────────────────────────────────────────────
+
+function render(ctx, w, h, ox, oy, z) {
+  ctx.fillStyle = '#5a5248';
+  ctx.fillRect(0, 0, w, h);
+
+  const cellSize = stoneSize; // world units per grid cell
+  const wx0 = ox / z, wy0 = oy / z;
+  const wx1 = (ox + w) / z, wy1 = (oy + h) / z;
+
+  const ciMin = Math.floor(wx0 / cellSize) - 2;
+  const ciMax = Math.ceil(wx1 / cellSize) + 2;
+  const cjMin = Math.floor(wy0 / cellSize) - 2;
+  const cjMax = Math.ceil(wy1 / cellSize) + 2;
+
+  // Draw each stone
+  for (let ci = ciMin; ci <= ciMax; ci++) {
+    for (let cj = cjMin; cj <= cjMax; cj++) {
+      const poly = voronoiPolygon(ci, cj, cellSize, gapWidth);
+      if (!poly || poly.length < 3) continue;
+
+      const smoothed = smoothPoly(poly, smoothing);
+
+      // Transform to screen coords
+      const screen = smoothed.map(p => ({
+        x: p.x * z - ox,
+        y: p.y * z - oy,
+      }));
+
+      const props = getSeedProps(ci, cj);
+      const seedPt = getSeedPoint(ci, cj, cellSize);
+
+      // Stone fill with subtle radial gradient (lighter center)
+      const scx = seedPt.x * z - ox;
+      const scy = seedPt.y * z - oy;
+      const sr = cellSize * z * 0.7;
+
+      const baseColor = stoneColor(props, z);
+      const g = ctx.createRadialGradient(scx - sr * 0.2, scy - sr * 0.25, sr * 0.05, scx, scy, sr);
+      // Parse base color for lighter version
+      const lv = Math.round(20 - darkness * 15);
+      g.addColorStop(0, adjustColor(baseColor, lv));
+      g.addColorStop(0.6, baseColor);
+      g.addColorStop(1, adjustColor(baseColor, -25));
+      ctx.fillStyle = g;
+
+      ctx.beginPath();
+      ctx.moveTo(screen[0].x, screen[0].y);
+      for (let i = 1; i < screen.length; i++) ctx.lineTo(screen[i].x, screen[i].y);
+      ctx.closePath();
+      ctx.fill();
+
+      // Subtle edge shadow (inner stroke)
+      ctx.save();
+      ctx.clip();
+      ctx.strokeStyle = `rgba(0,0,0,${0.15 + darkness * 0.15})`;
+      ctx.lineWidth = Math.max(1, gapWidth * z * 0.4);
+      ctx.beginPath();
+      ctx.moveTo(screen[0].x, screen[0].y);
+      for (let i = 1; i < screen.length; i++) ctx.lineTo(screen[i].x, screen[i].y);
+      ctx.closePath();
+      ctx.stroke();
+
+      // Moss
+      if (props.hasMoss) {
+        mossPatch(ctx, screen, hashN(ci, cj, 0xA0A0), props.mossIntensity, z);
+      }
+      ctx.restore();
+
+      // Crack lines on some stones
+      if (props.crack) {
+        const crng = mulberry32(hashN(ci, cj, 0xCCCC));
+        ctx.strokeStyle = `rgba(30,22,15,${0.25 + darkness * 0.15})`;
+        ctx.lineWidth = Math.max(0.5, 0.8 * z);
+        ctx.beginPath();
+        let cx2 = scx + (crng() - 0.5) * sr * 0.3;
+        let cy2 = scy + (crng() - 0.5) * sr * 0.3;
+        ctx.moveTo(cx2, cy2);
+        const crackLen = 3 + Math.floor(crng() * 4);
+        for (let s = 0; s < crackLen; s++) {
+          cx2 += (crng() - 0.5) * sr * 0.35;
+          cy2 += (crng() - 0.5) * sr * 0.35;
+          ctx.lineTo(cx2, cy2);
+        }
+        ctx.stroke();
+      }
+    }
+  }
+}
+
+function adjustColor(rgb, delta) {
+  const m = rgb.match(/rgb\((\d+),(\d+),(\d+)\)/);
+  if (!m) return rgb;
+  const clamp = v => Math.min(255, Math.max(0, v + delta));
+  return `rgb(${clamp(+m[1])},${clamp(+m[2])},${clamp(+m[3])})`;
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────
+
+window._patternView = setupCanvas(canvas, render);
+
+bindSlider('stoneSize',  v => { stoneSize = v; });
+bindSlider('gapWidth',   v => { gapWidth = v; });
+bindSlider('smoothing',  v => { smoothing = v; });
+bindSlider('mossAmount', v => { mossAmount = v; });
+bindSlider('darkness',   v => { darkness = v; });
+bindSlider('zoom', v => {
+  window._patternView.zoom = v / 100;
+  window._zoomValEl.textContent = v + '%';
+}, v => v + '%');
+bindSeed('seedInput');
+
+window._patternView.redraw();
+</script>
+</body>
+</html>

@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Малина — Pattern Generator</title>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <h3>🍇 Малина</h3>
+  <div class="sep"></div>
+
+  <div class="seed-row">
+    <label>Seed</label>
+    <input type="number" id="seedInput" value="23" min="0" max="9999999">
+    <button class="sec" onclick="randomSeedFn('seedInput')" title="Случайный seed">↺</button>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="row">
+    <label>Плотность</label>
+    <input type="range" id="density" min="1" max="6" value="2" step="0.5">
+    <span class="val" id="densityVal">2</span>
+  </div>
+  <div class="row">
+    <label>Размер</label>
+    <input type="range" id="size" min="20" max="130" value="65">
+    <span class="val" id="sizeVal">65</span>
+  </div>
+  <div class="row">
+    <label>Разброс угла</label>
+    <input type="range" id="angleSpread" min="0" max="180" value="360">
+    <span class="val" id="angleSpreadVal">360°</span>
+  </div>
+  <div class="row">
+    <label>Листья</label>
+    <input type="range" id="leafOpacity" min="0" max="1" value="1" step="0.05">
+    <span class="val" id="leafOpacityVal">1</span>
+  </div>
+  <div class="row">
+    <label>Ягоды</label>
+    <input type="range" id="berryOpacity" min="0" max="1" value="1" step="0.05">
+    <span class="val" id="berryOpacityVal">1</span>
+  </div>
+  <div class="row">
+    <label>Костянки</label>
+    <input type="range" id="drupeletSize" min="3" max="12" value="6" step="0.5">
+    <span class="val" id="drupeletSizeVal">6</span>
+  </div>
+  <div class="row">
+    <label>Масштаб</label>
+    <input type="range" id="zoom" min="25" max="300" value="100">
+    <span class="val" id="zoomVal">100%</span>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="btns">
+    <button onclick="exportPNG(canvas, render, window._patternSeed)">Сохранить PNG</button>
+    <button class="sec" onclick="window._patternView.resetView()">Сброс вида</button>
+  </div>
+
+  <div class="hint">Перетаскивайте мышью · Колесо = зум</div>
+  <div class="coords" id="coords">x: 0  y: 0</div>
+</div>
+
+<script src="pattern-lib.js"></script>
+<script>
+injectCSS(PATTERN_UI_CSS);
+
+window._patternSeed = 23;
+window._coordsEl = document.getElementById('coords');
+window._zoomEl = document.getElementById('zoom');
+window._zoomValEl = document.getElementById('zoomVal');
+
+const canvas = document.getElementById('c');
+
+// Pattern params
+let density = 2;
+let size = 65;
+let angleSpread = 360;
+let leafOpacity = 1;
+let berryOpacity = 1;
+let drupeletSize = 6;
+
+// ─── Drawing ──────────────────────────────────────────────────────────────
+
+// Draw a single raspberry leaflet (pointed oval with serrated edge).
+// Origin at base, pointing upward. r = half-length.
+function drawRaspberryLeaflet(cx, r, colorVar) {
+  const w = r * 0.48;
+  const teeth = 8;
+
+  cx.beginPath();
+  const steps = 60;
+  for (let s = 0; s <= steps * 2; s++) {
+    const t = s / (steps * 2);
+    const angle = t * Math.PI * 2;
+    // Pointed-oval profile: taller than wide, pointed tip
+    const ex = Math.sin(angle) * w * Math.sin(t * Math.PI * 1.0);
+    const ey = -Math.cos(angle) * r * (0.8 + 0.2 * Math.sin(t * Math.PI));
+
+    // Serration on the outer half only
+    const toothAmp = r * 0.09 * Math.sin(t * Math.PI);
+    const tooth = Math.sin(angle * teeth) * toothAmp;
+    const nx = Math.sin(angle);
+    const ny = -Math.cos(angle);
+    const nl = Math.hypot(nx, ny) || 1;
+
+    const px = ex + (nx / nl) * tooth;
+    const py = ey + (ny / nl) * tooth;
+    s === 0 ? cx.moveTo(px, py) : cx.lineTo(px, py);
+  }
+  cx.closePath();
+
+  // Fill with gradient
+  const rv = Math.round(40 + colorVar * 25);
+  const gv = Math.round(88 + colorVar * 30);
+  const bv = Math.round(22 + colorVar * 12);
+  const g = cx.createLinearGradient(0, r, 0, -r);
+  g.addColorStop(0, `rgba(${rv},${gv},${bv},0.9)`);
+  g.addColorStop(0.5, `rgba(${Math.round(rv * 1.4)},${Math.round(gv * 1.3)},${Math.round(bv * 1.4)},0.9)`);
+  g.addColorStop(1, `rgba(${rv},${gv},${bv},0.9)`);
+  cx.fillStyle = g;
+  cx.fill();
+
+  // Midrib
+  cx.strokeStyle = `rgba(${rv},${gv},${bv},0.6)`;
+  cx.lineWidth = Math.max(0.4, r * 0.025);
+  cx.beginPath();
+  cx.moveTo(0, r * 0.85);
+  cx.lineTo(0, -r * 0.88);
+  cx.stroke();
+}
+
+// Palmate compound leaf: 5 leaflets arranged like a hand
+function drawRaspberryLeaf(cx, x, y, scale, rotation, rng) {
+  cx.save();
+  cx.translate(x, y);
+  cx.rotate(rotation);
+  cx.scale(scale, scale);
+
+  const leafR = 22;
+  const petioleLen = 16;
+  const colorVar = rng() * 0.6;
+
+  // Petiole
+  cx.strokeStyle = '#3a5c22';
+  cx.lineWidth = 1.4;
+  cx.beginPath();
+  cx.moveTo(0, 0);
+  cx.lineTo(0, -petioleLen * 0.5);
+  cx.stroke();
+
+  // 5 leaflets: center, two intermediate (±45°), two outer (±80°)
+  const leafAngles  = [0, -0.75, 0.75, -1.35, 1.35];
+  const leafDists   = [petioleLen, petioleLen * 0.75, petioleLen * 0.75, petioleLen * 0.45, petioleLen * 0.45];
+  const leafScales  = [1.0, 0.82, 0.82, 0.65, 0.65];
+
+  for (let i = 0; i < 5; i++) {
+    const a = leafAngles[i];
+    const d = leafDists[i];
+    const lx = Math.sin(a) * d;
+    const ly = -Math.cos(a) * d;
+    cx.save();
+    cx.translate(lx, ly);
+    cx.rotate(a + (rng() - 0.5) * 0.15);
+    cx.scale(leafScales[i], leafScales[i]);
+    drawRaspberryLeaflet(cx, leafR, colorVar + rng() * 0.2);
+    cx.restore();
+  }
+
+  cx.restore();
+}
+
+// Precomputed drupelet positions for a raspberry cluster (~14 drupelets)
+// Roughly arranged in a dome shape. Normalized to unit radius.
+const DRUPELET_OFFSETS = (() => {
+  // 3 rings + center
+  const pts = [[0, 0]];
+  const rings = [[4, 0.38], [7, 0.74], [3, 1.05]];
+  for (const [count, r] of rings) {
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2 + (r * 1.3);
+      pts.push([Math.cos(a) * r, Math.sin(a) * r]);
+    }
+  }
+  return pts;
+})();
+
+function drawRaspberryBerry(cx, x, y, scale, rotation, rng) {
+  cx.save();
+  cx.translate(x, y);
+  cx.rotate(rotation);
+  cx.scale(scale, scale);
+
+  const dr = drupeletSize;
+  const clusterR = dr * 1.55; // radius unit for layout
+
+  // Overall shadow under the cluster
+  cx.shadowColor = 'rgba(0,0,0,0.3)';
+  cx.shadowBlur = dr * 1.5;
+  cx.shadowOffsetY = dr * 0.5;
+
+  // Draw drupelets back-to-front (sort by y so back ones are drawn first)
+  const sorted = DRUPELET_OFFSETS
+    .map(([dx, dy]) => ({ dx, dy }))
+    .sort((a, b) => a.dy - b.dy);
+
+  for (const { dx, dy } of sorted) {
+    const px = dx * clusterR;
+    const py = dy * clusterR;
+    // Depth effect: drupelets lower on the cluster are slightly brighter
+    const depth = (dy + 1.1) / 2.2; // 0=top, 1=bottom
+
+    cx.shadowColor = 'transparent';
+    cx.shadowBlur = 0;
+
+    const g = cx.createRadialGradient(px - dr * 0.25, py - dr * 0.3, dr * 0.05, px, py, dr);
+    g.addColorStop(0, `rgba(255, 120, 140, ${0.7 + depth * 0.2})`);
+    g.addColorStop(0.45, `rgba(190, 30, 55, ${0.85 + depth * 0.1})`);
+    g.addColorStop(1, `rgba(90, 5, 20, 0.95)`);
+
+    cx.fillStyle = g;
+    cx.beginPath();
+    cx.arc(px, py, dr, 0, Math.PI * 2);
+    cx.fill();
+
+    // Tiny specular highlight
+    cx.fillStyle = 'rgba(255,255,255,0.22)';
+    cx.beginPath();
+    cx.ellipse(px - dr * 0.28, py - dr * 0.32, dr * 0.28, dr * 0.18, -0.5, 0, Math.PI * 2);
+    cx.fill();
+  }
+
+  // Small green receptacle / calyx at top center
+  cx.fillStyle = '#4a7a30';
+  cx.beginPath();
+  cx.ellipse(0, -clusterR * 0.3, dr * 0.9, dr * 0.45, 0, 0, Math.PI * 2);
+  cx.fill();
+  // Tiny sepal points
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2;
+    cx.save();
+    cx.translate(0, -clusterR * 0.3);
+    cx.rotate(a);
+    cx.fillStyle = '#3a6020';
+    cx.beginPath();
+    cx.moveTo(0, 0);
+    cx.bezierCurveTo(-1.5, -dr * 0.5, -1, -dr * 1.1, 0, -dr * 1.2);
+    cx.bezierCurveTo(1, -dr * 1.1, 1.5, -dr * 0.5, 0, 0);
+    cx.fill();
+    cx.restore();
+  }
+
+  cx.restore();
+}
+
+// ─── Render ───────────────────────────────────────────────────────────────
+
+function render(ctx, w, h, ox, oy, z) {
+  ctx.fillStyle = '#f0ede8';
+  ctx.fillRect(0, 0, w, h);
+
+  const cellW = 180, cellH = 180;
+  const wx0 = ox / z, wy0 = oy / z;
+  const wx1 = (ox + w) / z, wy1 = (oy + h) / z;
+
+  const iMin = Math.floor(wx0 / cellW) - 1, iMax = Math.ceil(wx1 / cellW) + 1;
+  const jMin = Math.floor(wy0 / cellH) - 1, jMax = Math.ceil(wy1 / cellH) + 1;
+
+  const itemsPerCell = Math.max(1, Math.round(density));
+
+  for (let i = iMin; i <= iMax; i++) {
+    for (let j = jMin; j <= jMax; j++) {
+      const rng = mulberry32(hashN(i, j));
+
+      for (let k = 0; k < itemsPerCell; k++) {
+        const wx = (i + rng()) * cellW;
+        const wy = (j + rng()) * cellH;
+        const sx = wx * z - ox;
+        const sy = wy * z - oy;
+
+        const sc = (0.55 + rng() * 0.85) * z;
+        const rot = (rng() - 0.5) * 2 * (angleSpread / 360) * Math.PI;
+        const variant = rng(); // 0=leaf only, 1=berry only
+
+        ctx.shadowColor = 'rgba(0,0,0,0.12)';
+        ctx.shadowBlur = 4 * z;
+        ctx.shadowOffsetY = 2 * z;
+
+        if (leafOpacity > 0 && variant < 0.72) {
+          ctx.globalAlpha = leafOpacity * (0.78 + rng() * 0.22);
+          drawRaspberryLeaf(ctx, sx, sy, sc, rot, rng);
+        }
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+
+        if (berryOpacity > 0 && variant > 0.28) {
+          ctx.globalAlpha = berryOpacity * (0.88 + rng() * 0.12);
+          drawRaspberryBerry(ctx, sx, sy, sc, rot + (rng() - 0.5) * 0.3, rng);
+        }
+
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────
+
+window._patternView = setupCanvas(canvas, render);
+
+bindSlider('density',      v => { density = v; });
+bindSlider('size',         v => { size = v; });
+bindSlider('angleSpread',  v => { angleSpread = v; }, v => v + '°');
+bindSlider('leafOpacity',  v => { leafOpacity = v; });
+bindSlider('berryOpacity', v => { berryOpacity = v; });
+bindSlider('drupeletSize', v => { drupeletSize = v; });
+bindSlider('zoom',         v => {
+  window._patternView.zoom = v / 100;
+  window._zoomValEl.textContent = v + '%';
+}, v => v + '%');
+bindSeed('seedInput');
+
+window._patternView.redraw();
+</script>
+</body>
+</html>
