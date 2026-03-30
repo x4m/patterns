@@ -5,7 +5,6 @@
 
 ## Открыть онлайн
 
-> Ссылки через [htmlpreview.github.io](https://htmlpreview.github.io) — работают сразу, без настройки.
 
 | Генератор | Мотив |
 |-----------|-------|
@@ -18,11 +17,6 @@
 | [Реки](https://htmlpreview.github.io/?https://github.com/x4m/patterns/blob/main/river.html) | Меандрирующие потоки |
 | [Дороги](https://htmlpreview.github.io/?https://github.com/x4m/patterns/blob/main/road.html) | Лесные тропы, вид сверху |
 
-### GitHub Pages (быстрее и без прокси)
-
-Включите в настройках репозитория: **Settings → Pages → Source: Deploy from branch → main / (root)**.  
-После этого генераторы будут доступны напрямую:  
-`https://x4m.github.io/patterns/birch-generator.html` и т.д.
 
 ## Возможности
 
